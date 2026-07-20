@@ -1,0 +1,68 @@
+export interface Kpis {
+  operacoes_ativas: number
+  volume_cedido: number
+  valor_presente: number
+  prazo_medio: number
+  hhi: number
+  inadimplencia: number
+  receita_projetada: number
+  taxa_media: number
+}
+
+export interface ConcentracaoItem {
+  nome: string
+  valor: number
+  peso: string
+  pd_estimada?: number
+}
+
+export interface FatiaDistribuicao {
+  nome: string
+  valor: number
+  peso: number
+}
+
+export interface TituloAging {
+  documento: string
+  cedente: string
+  sacado: string
+  status: string
+  data_vencimento: string
+  dias_atraso: number
+  valor_face: number
+}
+
+export interface FaixaAging {
+  faixa: string
+  valor: number
+  qtd: number
+  peso: number
+  titulos?: TituloAging[]
+}
+
+export interface PontoEvolucao {
+  mes_ano_emissao: string
+  volume_originado: number
+  receita_projetada: number
+}
+
+export interface PontoFluxoCaixa {
+  mes_ano: string
+  fluxo_caixa: number
+}
+
+export interface RespostaRisco {
+  erro?: string
+  kpis?: Kpis
+  top_cedentes?: ConcentracaoItem[]
+  top_sacados?: ConcentracaoItem[]
+  distribuicao_cedentes?: FatiaDistribuicao[]
+  distribuicao_sacados?: FatiaDistribuicao[]
+  aging_inadimplencia?: FaixaAging[]
+  top_sacados_inadimplentes?: ConcentracaoItem[]
+  top_cedentes_inadimplentes?: ConcentracaoItem[]
+  grafico_fluxo_caixa?: PontoFluxoCaixa[]
+  grafico_evolucao?: PontoEvolucao[]
+}
+
+export const API_BASE = import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:8003'
