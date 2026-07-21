@@ -4,7 +4,10 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
+  ComposedChart,
+  LabelList,
   Legend,
+  Line,
   Pie,
   PieChart,
   ResponsiveContainer,
@@ -68,6 +71,7 @@ function App() {
   const [topSacados, setTopSacados] = useState<ConcentracaoItem[]>([])
   const [distCedentes, setDistCedentes] = useState<FatiaDistribuicao[]>([])
   const [distSacados, setDistSacados] = useState<FatiaDistribuicao[]>([])
+  const [distTipos, setDistTipos] = useState<FatiaDistribuicao[]>([])
   const [graficoFluxo, setGraficoFluxo] = useState<PontoFluxoCaixa[]>([])
   const [graficoEvolucao, setGraficoEvolucao] = useState<PontoEvolucao[]>([])
   const [agingInad, setAgingInad] = useState<FaixaAging[]>([])
@@ -145,6 +149,7 @@ function App() {
           setTopSacados([])
           setDistCedentes([])
           setDistSacados([])
+          setDistTipos([])
           setGraficoFluxo([])
           setGraficoEvolucao([])
           setAgingInad([])
@@ -159,6 +164,7 @@ function App() {
         setTopSacados(dados.top_sacados ?? [])
         setDistCedentes(dados.distribuicao_cedentes ?? [])
         setDistSacados(dados.distribuicao_sacados ?? [])
+        setDistTipos(dados.distribuicao_tipos ?? [])
         setGraficoFluxo(dados.grafico_fluxo_caixa ?? [])
         setGraficoEvolucao(dados.grafico_evolucao ?? [])
         setAgingInad(dados.aging_inadimplencia ?? [])
@@ -258,6 +264,71 @@ function App() {
           subtitulo="Participação no valor presente (top 7 + outros)"
           dados={distSacados}
         />
+      </section>
+
+      <section className="painel">
+        <h2>Concentração por tipo de recebível</h2>
+        <p className="subtitulo">Participação no valor presente das operações ativas</p>
+        <div className="chart-wrap chart-tipos">
+          {distTipos.length === 0 ? (
+            <p className="vazio">Sem dados</p>
+          ) : (
+            <ResponsiveContainer width="100%" height={Math.max(180, distTipos.length * 56)}>
+              <BarChart
+                data={[...distTipos].sort((a, b) => b.peso - a.peso)}
+                layout="vertical"
+                margin={{ top: 8, right: 88, left: 8, bottom: 8 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#d8e0ea" />
+                <XAxis
+                  type="number"
+                  domain={[0, 100]}
+                  tickFormatter={(v) => `${v}%`}
+                  stroke="#6b7c93"
+                  fontSize={12}
+                />
+                <YAxis
+                  type="category"
+                  dataKey="nome"
+                  width={100}
+                  stroke="#6b7c93"
+                  fontSize={13}
+                />
+                <Tooltip
+                  formatter={(value, _name, item) => {
+                    const fatia = item?.payload as FatiaDistribuicao | undefined
+                    return [
+                      `${formatarMoeda(Number(fatia?.valor ?? 0))} (${Number(value ?? 0).toFixed(1)}%)`,
+                      'Valor presente',
+                    ]
+                  }}
+                  contentStyle={{
+                    background: '#0f2740',
+                    border: 'none',
+                    borderRadius: 8,
+                    color: '#fff',
+                  }}
+                />
+                <Bar dataKey="peso" radius={[0, 6, 6, 0]} barSize={28} name="Peso">
+                  {[...distTipos]
+                    .sort((a, b) => b.peso - a.peso)
+                    .map((fatia, index) => (
+                      <Cell
+                        key={fatia.nome}
+                        fill={CORES_PIZZA[index % CORES_PIZZA.length]}
+                      />
+                    ))}
+                  <LabelList
+                    dataKey="peso"
+                    position="right"
+                    formatter={(label) => `${Number(label ?? 0).toFixed(1)}%`}
+                    style={{ fill: '#334155', fontSize: 12, fontWeight: 600 }}
+                  />
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </div>
       </section>
 
       <section className="painel">
@@ -429,13 +500,30 @@ function App() {
 
       <section className="painel">
         <h2>Evolução da originação</h2>
-        <p className="subtitulo">Volume originado e receita por mês de emissão</p>
-        <div className="chart-wrap">
-          <ResponsiveContainer width="100%" height={320}>
-            <BarChart data={graficoEvolucao}>
+        <p className="subtitulo">
+          Volume, receita e taxa média ponderada por mês de emissão (rótulo = receita ÷ volume)
+        </p>
+        <div className="chart-wrap chart-fluxo">
+          {graficoEvolucao.length === 0 ? (
+            <p className="vazio">Sem dados de originação para a data base selecionada.</p>
+          ) : (
+            <ComposedChart
+              responsive
+              width="100%"
+              height={340}
+              data={graficoEvolucao.map((ponto) => ({
+                ...ponto,
+                perc_receita:
+                  num(ponto.volume_originado) > 0
+                    ? (num(ponto.receita_projetada) / num(ponto.volume_originado)) * 100
+                    : 0,
+              }))}
+              margin={{ top: 28, right: 48, left: 8, bottom: 8 }}
+            >
               <CartesianGrid strokeDasharray="3 3" stroke="#d8e0ea" />
               <XAxis dataKey="mes_ano_emissao" tick={{ fill: '#5a6b7d', fontSize: 12 }} />
               <YAxis
+                yAxisId="volume"
                 tick={{ fill: '#5a6b7d', fontSize: 12 }}
                 tickFormatter={(v) =>
                   Number(v).toLocaleString('pt-BR', {
@@ -443,9 +531,25 @@ function App() {
                     maximumFractionDigits: 1,
                   })
                 }
+                width={56}
+              />
+              <YAxis
+                yAxisId="taxa"
+                orientation="right"
+                tick={{ fill: '#9e2a2b', fontSize: 12 }}
+                tickFormatter={(v) => `${Number(v).toFixed(1)}%`}
+                width={44}
               />
               <Tooltip
-                formatter={(value) => formatarMoeda(Number(value ?? 0))}
+                formatter={(value, name) => {
+                  if (name === 'Taxa média') {
+                    return [`${Number(value ?? 0).toFixed(2)}%`, name]
+                  }
+                  if (name === 'Receita' || name === 'Volume originado') {
+                    return [formatarMoeda(Number(value ?? 0)), name]
+                  }
+                  return [value, name]
+                }}
                 contentStyle={{
                   background: '#0f2740',
                   border: 'none',
@@ -454,10 +558,39 @@ function App() {
                 }}
               />
               <Legend />
-              <Bar dataKey="volume_originado" name="Volume originado" fill="#1f6f8b" radius={[4, 4, 0, 0]} />
-              <Bar dataKey="receita_projetada" name="Receita" fill="#99c24d" radius={[4, 4, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
+              <Bar
+                yAxisId="volume"
+                dataKey="volume_originado"
+                name="Volume originado"
+                fill="#1f6f8b"
+                radius={[4, 4, 0, 0]}
+              >
+                <LabelList
+                  dataKey="perc_receita"
+                  position="top"
+                  formatter={(label) => `${Number(label ?? 0).toFixed(1)}%`}
+                  style={{ fill: '#334155', fontSize: 11, fontWeight: 600 }}
+                />
+              </Bar>
+              <Bar
+                yAxisId="volume"
+                dataKey="receita_projetada"
+                name="Receita"
+                fill="#99c24d"
+                radius={[4, 4, 0, 0]}
+              />
+              <Line
+                yAxisId="taxa"
+                type="monotone"
+                dataKey="taxa_media"
+                name="Taxa média"
+                stroke="#9e2a2b"
+                strokeWidth={2.5}
+                dot={{ r: 4, fill: '#9e2a2b' }}
+                activeDot={{ r: 5 }}
+              />
+            </ComposedChart>
+          )}
         </div>
       </section>
 

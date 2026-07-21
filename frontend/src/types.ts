@@ -44,6 +44,7 @@ export interface PontoEvolucao {
   mes_ano_emissao: string
   volume_originado: number
   receita_projetada: number
+  taxa_media: number
 }
 
 export interface PontoFluxoCaixa {
@@ -58,6 +59,7 @@ export interface RespostaRisco {
   top_sacados?: ConcentracaoItem[]
   distribuicao_cedentes?: FatiaDistribuicao[]
   distribuicao_sacados?: FatiaDistribuicao[]
+  distribuicao_tipos?: FatiaDistribuicao[]
   aging_inadimplencia?: FaixaAging[]
   top_sacados_inadimplentes?: ConcentracaoItem[]
   top_cedentes_inadimplentes?: ConcentracaoItem[]
