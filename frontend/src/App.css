@@ -141,11 +141,30 @@ h2 {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.kpis-recompra-baixa {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .kpi {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 14px 16px;
+}
+
+.kpi.alerta-pct-medio {
+  background: #fde68a;
+  border-color: #f59e0b;
+}
+
+.kpi.alerta-pct-alto {
+  background: #fecaca;
+  border-color: #ef4444;
+}
+
+.kpi.alerta-pct-medio strong,
+.kpi.alerta-pct-alto strong {
+  color: inherit;
 }
 
 .kpi span {
@@ -262,10 +281,30 @@ th {
 td:nth-child(2),
 td:nth-child(3),
 td:nth-child(4),
+td:nth-child(5),
+td:nth-child(6),
 th:nth-child(2),
 th:nth-child(3),
-th:nth-child(4) {
+th:nth-child(4),
+th:nth-child(5),
+th:nth-child(6) {
   text-align: right;
+}
+
+.alerta-pct {
+  border-radius: 4px;
+}
+
+.alerta-pct-medio {
+  background: #fde68a;
+  color: #78350f;
+  font-weight: 600;
+}
+
+.alerta-pct-alto {
+  background: #fecaca;
+  color: #7f1d1d;
+  font-weight: 600;
 }
 
 .tabela-aging {

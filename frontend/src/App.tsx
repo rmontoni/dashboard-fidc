@@ -36,6 +36,8 @@ const KPI_VAZIO: Kpis = {
   inadimplencia: 0,
   receita_projetada: 0,
   taxa_media: 0,
+  taxa_recompra: 0,
+  taxa_baixa: 0,
 }
 
 const CORES_PIZZA = [
@@ -250,6 +252,17 @@ function App() {
         <article className="kpi">
           <span>Taxa média</span>
           <strong>{num(indicadores.taxa_media).toFixed(2)}%</strong>
+        </article>
+      </section>
+
+      <section className="kpis kpis-recompra-baixa">
+        <article className={`kpi ${classeAlertaPct(indicadores.taxa_recompra)}`}>
+          <span>Taxa de Recompra</span>
+          <strong>{num(indicadores.taxa_recompra).toFixed(2)}%</strong>
+        </article>
+        <article className={`kpi ${classeAlertaPct(indicadores.taxa_baixa)}`}>
+          <span>Taxa de Baixa</span>
+          <strong>{num(indicadores.taxa_baixa).toFixed(2)}%</strong>
         </article>
       </section>
 
@@ -595,8 +608,17 @@ function App() {
       </section>
 
       <section className="grades">
-        <ConcentracaoTabela titulo="Top 10 Cedentes" itens={topCedentes} />
-        <ConcentracaoTabela titulo="Top 10 Sacados" itens={topSacados} mostrarPd />
+        <ConcentracaoTabela
+          titulo="Top 10 Cedentes"
+          itens={topCedentes}
+          mostrarRecompraBaixa
+        />
+        <ConcentracaoTabela
+          titulo="Top 10 Sacados"
+          itens={topSacados}
+          mostrarPd
+          mostrarRecompraBaixa
+        />
       </section>
     </div>
   )
@@ -670,18 +692,27 @@ function GraficoPizza({
   )
 }
 
+function classeAlertaPct(valor: number | undefined | null): string {
+  const v = num(valor)
+  if (v > 25) return 'alerta-pct alerta-pct-alto'
+  if (v >= 10) return 'alerta-pct alerta-pct-medio'
+  return 'alerta-pct'
+}
+
 function ConcentracaoTabela({
   titulo,
   itens,
   mostrarPd = false,
+  mostrarRecompraBaixa = false,
   colunaValor = 'Valor face',
 }: {
   titulo: string
   itens: ConcentracaoItem[]
   mostrarPd?: boolean
+  mostrarRecompraBaixa?: boolean
   colunaValor?: string
 }) {
-  const colunas = mostrarPd ? 4 : 3
+  const colunas = 3 + (mostrarPd ? 1 : 0) + (mostrarRecompraBaixa ? 2 : 0)
 
   return (
     <div className="painel">
@@ -693,6 +724,8 @@ function ConcentracaoTabela({
             <th>{colunaValor}</th>
             <th>Peso</th>
             {mostrarPd && <th>PD estimada</th>}
+            {mostrarRecompraBaixa && <th>% Recompra</th>}
+            {mostrarRecompraBaixa && <th>% Baixa</th>}
           </tr>
         </thead>
         <tbody>
@@ -708,8 +741,16 @@ function ConcentracaoTabela({
                 <td>{item.nome}</td>
                 <td>{formatarMoeda(item.valor)}</td>
                 <td>{item.peso}</td>
-                {mostrarPd && (
-                  <td>{num(item.pd_estimada).toFixed(2)}%</td>
+                {mostrarPd && <td>{num(item.pd_estimada).toFixed(2)}%</td>}
+                {mostrarRecompraBaixa && (
+                  <td className={classeAlertaPct(item.perc_recompra)}>
+                    {num(item.perc_recompra).toFixed(2)}%
+                  </td>
+                )}
+                {mostrarRecompraBaixa && (
+                  <td className={classeAlertaPct(item.perc_baixa)}>
+                    {num(item.perc_baixa).toFixed(2)}%
+                  </td>
                 )}
               </tr>
             ))

@@ -7,6 +7,8 @@ export interface Kpis {
   inadimplencia: number
   receita_projetada: number
   taxa_media: number
+  taxa_recompra: number
+  taxa_baixa: number
 }
 
 export interface ConcentracaoItem {
@@ -14,6 +16,8 @@ export interface ConcentracaoItem {
   valor: number
   peso: string
   pd_estimada?: number
+  perc_recompra?: number
+  perc_baixa?: number
 }
 
 export interface FatiaDistribuicao {
