@@ -1,4 +1,6 @@
 export interface Kpis {
+  pl_fundo: number
+  provisao_pdd: number
   operacoes_ativas: number
   volume_cedido: number
   valor_presente: number
@@ -9,6 +11,9 @@ export interface Kpis {
   taxa_media: number
   taxa_recompra: number
   taxa_baixa: number
+  credit_var_historico_95: number
+  credit_var_parametrico_95: number
+  n_obs?: number
 }
 
 export interface ConcentracaoItem {
@@ -34,11 +39,13 @@ export interface TituloAging {
   data_vencimento: string
   dias_atraso: number
   valor_face: number
+  valor_com_pdd?: number
 }
 
 export interface FaixaAging {
   faixa: string
   valor: number
+  valor_com_pdd?: number
   qtd: number
   peso: number
   titulos?: TituloAging[]

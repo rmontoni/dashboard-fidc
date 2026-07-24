@@ -28,6 +28,8 @@ import { API_BASE } from './types'
 import './App.css'
 
 const KPI_VAZIO: Kpis = {
+  pl_fundo: 0,
+  provisao_pdd: 0,
   operacoes_ativas: 0,
   volume_cedido: 0,
   valor_presente: 0,
@@ -38,6 +40,9 @@ const KPI_VAZIO: Kpis = {
   taxa_media: 0,
   taxa_recompra: 0,
   taxa_baixa: 0,
+  credit_var_historico_95: 0,
+  credit_var_parametrico_95: 0,
+  n_obs: 0,
 }
 
 const CORES_PIZZA = [
@@ -217,6 +222,21 @@ function App() {
       )}
       {aCarregar && <div className="banner-status">Carregando indicadores…</div>}
 
+      <section className="kpis kpis-pl">
+        <article className="kpi kpi-destaque">
+          <span>PL do Fundo</span>
+          <strong>{formatarMoeda(indicadores.pl_fundo)}</strong>
+        </article>
+        <article className="kpi">
+          <span>Credit VaR 95% (histórico)</span>
+          <strong>{num(indicadores.credit_var_historico_95).toFixed(2)}%</strong>
+        </article>
+        <article className="kpi">
+          <span>Credit VaR 95% (paramétrico)</span>
+          <strong>{num(indicadores.credit_var_parametrico_95).toFixed(2)}%</strong>
+        </article>
+      </section>
+
       <section className="kpis kpis-carteira">
         <article className="kpi">
           <span>Operações ativas</span>
@@ -353,11 +373,21 @@ function App() {
               base)
             </p>
           </div>
-          <div className="painel-total">
-            <span>VNP Total</span>
-            <strong>
-              {formatarMoeda(agingInad.reduce((acc, f) => acc + num(f.valor), 0))}
-            </strong>
+          <div className="painel-totais">
+            <div className="painel-total">
+              <span>VNP Total</span>
+              <strong>
+                {formatarMoeda(agingInad.reduce((acc, f) => acc + num(f.valor), 0))}
+              </strong>
+            </div>
+            <div className="painel-total">
+              <span>Valor com PDD</span>
+              <strong>
+                {formatarMoeda(
+                  agingInad.reduce((acc, f) => acc + num(f.valor_com_pdd), 0),
+                )}
+              </strong>
+            </div>
           </div>
         </div>
         {agingInad.length === 0 ? (
@@ -369,6 +399,7 @@ function App() {
                 <th></th>
                 <th>Faixa</th>
                 <th>Valor</th>
+                <th>Valor com PDD</th>
                 <th>Qtd</th>
                 <th>Peso</th>
               </tr>
@@ -389,12 +420,13 @@ function App() {
                       <td className="col-expandir">{aberta ? '▼' : '▶'}</td>
                       <td>{faixa.faixa}</td>
                       <td>{formatarMoeda(faixa.valor)}</td>
+                      <td>{formatarMoeda(faixa.valor_com_pdd)}</td>
                       <td>{faixa.qtd}</td>
                       <td>{num(faixa.peso).toFixed(1)}%</td>
                     </tr>
                     {aberta && (
                       <tr className="linha-detalhe-aging">
-                        <td colSpan={5}>
+                        <td colSpan={6}>
                           {titulos.length === 0 ? (
                             <p className="vazio">Nenhum título nesta faixa.</p>
                           ) : (
@@ -408,6 +440,7 @@ function App() {
                                   <th>Dias atraso</th>
                                   <th>Status</th>
                                   <th>Valor face</th>
+                                  <th>Valor com PDD</th>
                                 </tr>
                               </thead>
                               <tbody>
@@ -422,6 +455,7 @@ function App() {
                                     <td>{titulo.dias_atraso}</td>
                                     <td>{titulo.status}</td>
                                     <td>{formatarMoeda(titulo.valor_face)}</td>
+                                    <td>{formatarMoeda(titulo.valor_com_pdd)}</td>
                                   </tr>
                                 ))}
                               </tbody>

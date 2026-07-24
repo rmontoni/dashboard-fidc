@@ -141,6 +141,10 @@ h2 {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.kpis-pl {
+  grid-template-columns: 1.4fr 1fr 1fr;
+}
+
 .kpis-recompra-baixa {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
@@ -150,6 +154,28 @@ h2 {
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 14px 16px;
+}
+
+.kpi-destaque {
+  background: linear-gradient(135deg, #0f2740 0%, #1f4e6b 100%);
+  border-color: #1f4e6b;
+  color: #fff;
+}
+
+.kpi-destaque span,
+.kpi-destaque small {
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.kpi-destaque strong {
+  color: #fff;
+  font-size: 1.65rem;
+}
+
+.kpi-destaque small {
+  display: block;
+  margin-top: 8px;
+  font-size: 0.78rem;
 }
 
 .kpi.alerta-pct-medio {
@@ -197,6 +223,13 @@ h2 {
 
 .painel-cabecalho .subtitulo {
   margin-bottom: 12px;
+}
+
+.painel-totais {
+  display: flex;
+  gap: 20px;
+  align-items: flex-end;
+  flex-shrink: 0;
 }
 
 .painel-total {
@@ -314,9 +347,11 @@ th:nth-child(6) {
 .tabela-aging th:nth-child(3),
 .tabela-aging th:nth-child(4),
 .tabela-aging th:nth-child(5),
+.tabela-aging th:nth-child(6),
 .tabela-aging td:nth-child(3),
 .tabela-aging td:nth-child(4),
-.tabela-aging td:nth-child(5) {
+.tabela-aging td:nth-child(5),
+.tabela-aging td:nth-child(6) {
   text-align: right;
 }
 
@@ -369,8 +404,10 @@ th:nth-child(6) {
 
 .tabela-titulos-aging th:nth-child(5),
 .tabela-titulos-aging th:nth-child(7),
+.tabela-titulos-aging th:nth-child(8),
 .tabela-titulos-aging td:nth-child(5),
-.tabela-titulos-aging td:nth-child(7) {
+.tabela-titulos-aging td:nth-child(7),
+.tabela-titulos-aging td:nth-child(8) {
   text-align: right;
 }
 
