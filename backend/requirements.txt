@@ -5,3 +5,5 @@ numpy>=2.0.0
 python-multipart>=0.0.12
 supabase>=2.10.0
 python-dotenv>=1.0.0
+requests>=2.32.0
+python-dateutil>=2.9.0

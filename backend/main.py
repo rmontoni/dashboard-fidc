@@ -1,8 +1,16 @@
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
 
+from conciliacao import (
+    conciliar_estoque_existente,
+    data_base_maxima,
+    data_base_minima,
+    listar_datas_detalhe,
+)
 from db import listar_datas_base
-from risco import calcular_risco_fidc
+from fundos import atualizar_fundo, criar_fundo, listar_fundos, obter_fundo
+from risco import calcular_pl_liquidez, calcular_risco_fidc
 
 app = FastAPI(title="API Risco FIDC", version="1.0.0")
 
@@ -18,17 +26,232 @@ app.add_middleware(
 )
 
 
+class FundoCreate(BaseModel):
+    codigo: str
+    nome: str
+    cnpj: str
+    data_inicio: str | None = None
+    idsf_carteiras: str = ""
+    tabela_estoque: str = "BD_Estoque"
+    bdr_tp_contabil_estoque: str = "P"
+    bdr_tp_contabil_mov: str = "A"
+    ativo: bool = True
+    observacao: str | None = None
+
+
+class FundoUpdate(BaseModel):
+    nome: str | None = None
+    cnpj: str | None = None
+    data_inicio: str | None = None
+    idsf_carteiras: str | None = None
+    tabela_estoque: str | None = None
+    bdr_tp_contabil_estoque: str | None = None
+    bdr_tp_contabil_mov: str | None = None
+    ativo: bool | None = None
+    observacao: str | None = Field(default=None)
+
+
+class ConciliarLocalBody(BaseModel):
+    data_base: str
+    fundo: str = "alpha"
+    observacao: str | None = None
+
+
 @app.get("/health")
 def health():
-    return {"status": "ok", "fonte": "supabase"}
+    return {
+        "status": "ok",
+        "fonte": "supabase+idsf",
+        "escopo_atual": "direitos_creditorios+caixa+aplicacoes",
+        "pl_completo": True,
+        "nota": "PL = DC + CC Saldo + Aplicações + Provisões (CPR/taxas)",
+    }
+
+
+@app.get("/fidc/fundos")
+def get_fundos(ativos: bool = Query(False, description="Se true, só fundos ativos")):
+    try:
+        return {"fundos": listar_fundos(apenas_ativos=ativos)}
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=503,
+            detail=f"Não foi possível listar fundos (rode sql/fidc_fundos.sql?): {exc}",
+        ) from exc
+
+
+@app.get("/fidc/fundos/{id_fundo}")
+def get_fundo(id_fundo: int):
+    fundo = obter_fundo(id_fundo=id_fundo)
+    if not fundo:
+        raise HTTPException(status_code=404, detail="Fundo não encontrado")
+    return fundo
+
+
+@app.post("/fidc/fundos", status_code=201)
+def post_fundo(body: FundoCreate):
+    try:
+        return criar_fundo(body.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.patch("/fidc/fundos/{id_fundo}")
+def patch_fundo(id_fundo: int, body: FundoUpdate):
+    try:
+        dados = body.model_dump(exclude_unset=True)
+        return atualizar_fundo(id_fundo, dados)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/fidc/datas")
-def datas_base():
-    """Retorna as datas base disponíveis no Supabase (formato dd/mm/yyyy)."""
-    return {"datas": listar_datas_base()}
+def datas_base(
+    fundo: str | None = Query(None, description="Código do fundo (default: padrao)"),
+    todas: bool = Query(
+        True,
+        description="Se true, retorna calendário desde o início com flag de conciliação",
+    ),
+):
+    """
+    Datas base do fundo.
+
+    - `datas`: apenas conciliadas (ok) — usáveis no motor
+    - `detalhe`: calendário completo (dias úteis) com status/conciliada
+    """
+    try:
+        detalhe = listar_datas_detalhe(codigo=fundo)
+        conciliadas = [d["data"] for d in detalhe if d["conciliada"]]
+        limite = data_base_maxima()
+        from calendario import e_feriado, nome_feriado
+        from datetime import timedelta
+
+        feriados = []
+        cursor = data_base_minima()
+        while cursor <= limite:
+            if e_feriado(cursor):
+                feriados.append(
+                    {
+                        "data": cursor.isoformat(),
+                        "nome": nome_feriado(cursor) or "Feriado",
+                    }
+                )
+            cursor += timedelta(days=1)
+        if not todas:
+            return {
+                "datas": conciliadas,
+                "escopo": "direitos_creditorios",
+                "data_limite": limite.isoformat(),
+                "data_limite_br": limite.strftime("%d/%m/%Y"),
+                "feriados": feriados,
+            }
+        return {
+            "datas": conciliadas,
+            "detalhe": detalhe,
+            "feriados": feriados,
+            "escopo": "direitos_creditorios+caixa+aplicacoes",
+            "nota": "PL = DC(BDR) + CC Saldo + Aplicações + Provisões; conciliação = DC BDR × DC IDSF",
+            "data_limite": limite.isoformat(),
+            "data_limite_br": limite.strftime("%d/%m/%Y"),
+            "atraso_dias_uteis": 2,
+            "fonte_carteira": "movimentacoes_bdr",
+        }
+    except Exception as exc:  # noqa: BLE001
+        # Fallback legado
+        return {"datas": listar_datas_base(), "detalhe": [], "erro": str(exc)}
+
+
+@app.post("/fidc/conciliacao/local")
+def post_conciliacao_local(body: ConciliarLocalBody):
+    """Marca data como conciliada usando estoque já no BD (direitos creditórios)."""
+    try:
+        return conciliar_estoque_existente(
+            body.data_base,
+            codigo_fundo=body.fundo,
+            observacao=body.observacao,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+class LiquidezLoadBody(BaseModel):
+    inicio: str | None = None
+    fim: str | None = None
+    pendentes: bool = True
+
+
+@app.post("/fidc/liquidez/carregar")
+def post_carregar_liquidez(body: LiquidezLoadBody):
+    """Carrega histórico de caixa/aplicações via GetPortfolioComposition (por período)."""
+    try:
+        from carregar_liquidez_idsf import carregar, _parse_date
+
+        return carregar(
+            inicio=_parse_date(body.inicio),
+            fim=_parse_date(body.fim),
+            so_pendentes=body.pendentes,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.get("/fidc/risco")
-def risco_fidc(dataBase: str = Query(..., description="Data base no formato dd/mm/yyyy")):
+def risco_fidc(
+    dataBase: str = Query(..., description="Data base no formato dd/mm/yyyy"),
+    fundo: str | None = Query(None, description="Código do fundo"),
+):
+    """Risco pela carteira BDR (aq−liq) + liquidez IDSF. Até D-2."""
+    from datetime import datetime
+
+    try:
+        d = datetime.strptime(dataBase.strip()[:10], "%d/%m/%Y").date()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Data inválida: {dataBase}") from exc
+    limite = data_base_maxima()
+    minima = data_base_minima()
+    if d < minima:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Data base {dataBase} indisponível. "
+                f"Dashboard a partir de {minima.strftime('%d/%m/%Y')}."
+            ),
+        )
+    if d > limite:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Data base {dataBase} ainda não liberada. "
+                f"Sistema disponível até D-2 ({limite.strftime('%d/%m/%Y')})."
+            ),
+        )
+    from calendario import e_dia_util, e_feriado, nome_feriado
+
+    if not e_dia_util(d):
+        if e_feriado(d):
+            nome = nome_feriado(d) or "feriado"
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Data base {dataBase} é feriado ({nome}). "
+                    "Não há acúmulo de juros nem relatório disponível."
+                ),
+            )
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Data base {dataBase} não é dia útil. "
+                "Dashboard disponível apenas em dias úteis bancários."
+            ),
+        )
+    # Motor sempre pelas movimentações BDR (sem BD_Estoque)
     return calcular_risco_fidc(dataBase)
