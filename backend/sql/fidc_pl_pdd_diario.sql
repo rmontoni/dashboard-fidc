@@ -7,6 +7,8 @@ create table if not exists public.fidc_pl_pdd_diario (
   apelido text not null,
   pl numeric not null default 0,
   pdd numeric not null default 0,
+  qtde_cotas numeric,
+  valor_cota numeric,
   fonte text not null default 'idsf_json',
   atualizado_em timestamptz not null default now(),
   primary key (data_posicao, id_carteira)

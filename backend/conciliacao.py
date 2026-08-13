@@ -1,7 +1,7 @@
 """Conciliação de datas base do FIDC (multi-fundo).
 
 Datas disponíveis = calendário desde o início do fundo (dias úteis),
-limitado a D-2 (dois dias úteis antes de hoje).
+limitado a D-1 (um dia útil antes de hoje).
 O motor de risco só roda em datas com status `ok` (estoque de direitos
 creditórios conferido). Caixa/outras aplicações (IDSF) entram depois no PL.
 """
@@ -26,7 +26,7 @@ STATUS_PENDENTE = "pendente"
 TABELA_CONC = "fidc_conciliacao_data_base"
 
 # Atraso operacional: dashboard só libera até D-N (dias úteis).
-ATRASO_DIAS_UTEIS = 2
+ATRASO_DIAS_UTEIS = 1
 
 # Dashboard e motor: sem datas anteriores a esta (estoque-base BDR).
 DATA_MINIMA_DASHBOARD = date(2024, 5, 31)
@@ -140,7 +140,7 @@ def listar_datas_detalhe(
     Calendário de datas base desde o início do fundo, com flag de conciliação
     e indicadores de liquidez IDSF (PL dia a dia mesmo sem conciliação).
 
-    Por padrão, `fim` = D-2 (dois dias úteis antes de hoje).
+    Por padrão, `fim` = D-1 (um dia útil antes de hoje).
     """
     from db import mapa_liquidez_diario
     from carteira_movimentacoes import dc_bdr_conciliado

@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import {
   Bar,
   BarChart,
@@ -18,6 +18,7 @@ import {
 import type {
   ConcentracaoItem,
   ConciliacaoDc,
+  ConsignadoEmpresa,
   DataBaseDetalhe,
   FaixaAging,
   FatiaDistribuicao,
@@ -26,9 +27,11 @@ import type {
   PontoFluxoCaixa,
   PosicaoLiquidez,
   PosicoesLiquidez,
+  RespostaConsignado,
   RespostaRisco,
 } from './types'
 import { API_BASE } from './types'
+import { CalendarioDataBase } from './CalendarioDataBase'
 import './App.css'
 
 const KPI_VAZIO: Kpis = {
@@ -44,6 +47,8 @@ const KPI_VAZIO: Kpis = {
   prazo_medio: 0,
   hhi: 0,
   inadimplencia: 0,
+  volume_aquisicoes_historico: 0,
+  subordinacao_pct: null,
   receita_projetada: 0,
   taxa_media: 0,
   taxa_recompra: 0,
@@ -118,6 +123,11 @@ function Dashboard({ fundoNome }: DashboardProps) {
   const [topSacadosInad, setTopSacadosInad] = useState<ConcentracaoItem[]>([])
   const [topCedentesInad, setTopCedentesInad] = useState<ConcentracaoItem[]>([])
   const [faixaAgingAberta, setFaixaAgingAberta] = useState<string | null>(null)
+  const [consignado, setConsignado] = useState<RespostaConsignado | null>(null)
+  const [empresaConsignadoAberta, setEmpresaConsignadoAberta] = useState<string | null>(
+    null,
+  )
+  const [avisoConsignado, setAvisoConsignado] = useState<string | null>(null)
   const [posicoesLiquidez, setPosicoesLiquidez] = useState<PosicoesLiquidez>(POSICOES_VAZIAS)
   const [avisoIdsf, setAvisoIdsf] = useState<string | null>(null)
   const [conciliacaoDc, setConciliacaoDc] = useState<ConciliacaoDc | null>(null)
@@ -138,10 +148,15 @@ function Dashboard({ fundoNome }: DashboardProps) {
     if (preferirAtual) {
       setDataBaseFiltro((atual) => {
         if (atual && detalhe.some((d) => d.data === atual)) return atual
-        return ultima?.data ?? ''
+        const salvo = localStorage.getItem('fidc_data_base') || ''
+        if (salvo && detalhe.some((d) => d.data === salvo)) return salvo
+        const proxima = ultima?.data ?? ''
+        if (proxima) localStorage.setItem('fidc_data_base', proxima)
+        return proxima
       })
     } else if (ultima) {
       setDataBaseFiltro(ultima.data)
+      localStorage.setItem('fidc_data_base', ultima.data)
     }
     if (ultima?.data_iso) {
       const [y, m] = ultima.data_iso.split('-').map(Number)
@@ -226,12 +241,33 @@ function Dashboard({ fundoNome }: DashboardProps) {
 
       setACarregar(true)
       setErro(null)
+      setAvisoConsignado(null)
 
       try {
-        const res = await fetch(
-          `${API_BASE}/fidc/risco?dataBase=${encodeURIComponent(dataBaseFiltro)}`,
-        )
+        const [res, resCons] = await Promise.all([
+          fetch(
+            `${API_BASE}/fidc/risco?dataBase=${encodeURIComponent(dataBaseFiltro)}`,
+          ),
+          fetch(
+            `${API_BASE}/fidc/consignado?dataBase=${encodeURIComponent(dataBaseFiltro)}`,
+          ),
+        ])
         const dados = await res.json()
+
+        if (resCons.ok) {
+          const cons = (await resCons.json()) as RespostaConsignado
+          setConsignado(cons)
+          setAvisoConsignado(cons.aviso ?? null)
+          setEmpresaConsignadoAberta(null)
+        } else {
+          const consErr = await resCons.json().catch(() => ({}))
+          setConsignado(null)
+          setAvisoConsignado(
+            typeof consErr.detail === 'string'
+              ? consErr.detail
+              : 'Consignado Privado indisponível para esta data.',
+          )
+        }
 
         if (!res.ok) {
           const detail = dados.detail ?? dados.erro ?? `HTTP ${res.status}`
@@ -318,8 +354,6 @@ function Dashboard({ fundoNome }: DashboardProps) {
     num(indicadores.taxa_baixa_recompra) > 0
       ? num(indicadores.taxa_baixa_recompra)
       : num(indicadores.taxa_baixa) + num(indicadores.taxa_recompra)
-  const temRecompra =
-    indicadores.tem_recompra === true || num(indicadores.taxa_recompra) > 0
 
   return (
     <div className="dashboard">
@@ -341,7 +375,10 @@ function Dashboard({ fundoNome }: DashboardProps) {
           mapa={mapaDatas}
           feriados={feriados}
           onMesChange={(ano, mes) => setMesCalendario({ ano, mes })}
-          onSelect={(data) => setDataBaseFiltro(data)}
+          onSelect={(data) => {
+            setDataBaseFiltro(data)
+            localStorage.setItem('fidc_data_base', data)
+          }}
         />
       </header>
 
@@ -471,18 +508,28 @@ function Dashboard({ fundoNome }: DashboardProps) {
         <article className="kpi">
           <span>Inadimplência</span>
           <strong>{num(indicadores.inadimplencia).toFixed(2)}%</strong>
+          <small className="kpi-nota">vencido / aquisições até a data base</small>
+        </article>
+        <article className="kpi">
+          <span>% Subordinação</span>
+          <strong>
+            {indicadores.subordinacao_pct != null
+              ? `${num(indicadores.subordinacao_pct).toFixed(2)}%`
+              : '—'}
+          </strong>
+          <small className="kpi-nota">PL SUB / PL consolidado</small>
         </article>
         <article className="kpi">
           <span>Receita total projetada</span>
           <strong>{formatarMoeda(indicadores.receita_projetada)}</strong>
         </article>
+      </section>
+
+      <section className="kpis kpis-baixa-var">
         <article className="kpi">
           <span>Taxa média a.m.</span>
           <strong>{num(indicadores.taxa_media).toFixed(2)}%</strong>
         </article>
-      </section>
-
-      <section className="kpis kpis-baixa-var">
         <article className={`kpi ${classeAlertaPct(taxaBaixaRecompra)}`}>
           <span>Taxa de Baixa/Recompra</span>
           <strong>{taxaBaixaRecompra.toFixed(2)}%</strong>
@@ -507,6 +554,18 @@ function Dashboard({ fundoNome }: DashboardProps) {
           titulo="Distribuição por sacado"
           subtitulo="Participação no valor presente (top 7 + outros)"
           dados={distSacados}
+        />
+      </section>
+
+      <section className="grades">
+        <ConcentracaoTabela
+          titulo="Top 10 Cedentes"
+          itens={topCedentes}
+        />
+        <ConcentracaoTabela
+          titulo="Top 10 Sacados"
+          itens={topSacados}
+          mostrarPd
         />
       </section>
 
@@ -832,258 +891,157 @@ function Dashboard({ fundoNome }: DashboardProps) {
         </div>
       </section>
 
-      <section className="grades">
-        <ConcentracaoTabela
-          titulo="Top 10 Cedentes"
-          itens={topCedentes}
-          mostrarRecompraBaixa={temRecompra}
-          mostrarBaixa
-        />
-        <ConcentracaoTabela
-          titulo="Top 10 Sacados"
-          itens={topSacados}
-          mostrarPd
-          mostrarRecompraBaixa={temRecompra}
-          mostrarBaixa
-        />
-      </section>
-    </div>
-  )
-}
-
-function rotuloMesNome(mes: number): string {
-  return new Date(2000, mes, 1).toLocaleDateString('pt-BR', { month: 'long' })
-}
-
-const MESES_PT = Array.from({ length: 12 }, (_, i) => ({
-  valor: i,
-  nome: rotuloMesNome(i),
-}))
-
-function CalendarioDataBase({
-  ano,
-  mes,
-  selecionada,
-  itemSelecionado,
-  mapa,
-  feriados,
-  onMesChange,
-  onSelect,
-}: {
-  ano: number
-  mes: number
-  selecionada: string
-  itemSelecionado?: DataBaseDetalhe
-  mapa: Map<string, DataBaseDetalhe>
-  feriados: Map<string, string>
-  onMesChange: (ano: number, mes: number) => void
-  onSelect: (data: string) => void
-}) {
-  const [aberto, setAberto] = useState(false)
-  const [editandoMes, setEditandoMes] = useState(false)
-  const [editandoAno, setEditandoAno] = useState(false)
-  const raizRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!aberto) {
-      setEditandoMes(false)
-      setEditandoAno(false)
-    }
-  }, [aberto])
-
-  useEffect(() => {
-    if (!aberto) return
-    function fecharFora(ev: MouseEvent) {
-      if (raizRef.current && !raizRef.current.contains(ev.target as Node)) {
-        setAberto(false)
-      }
-    }
-    function fecharEsc(ev: KeyboardEvent) {
-      if (ev.key === 'Escape') setAberto(false)
-    }
-    document.addEventListener('mousedown', fecharFora)
-    document.addEventListener('keydown', fecharEsc)
-    return () => {
-      document.removeEventListener('mousedown', fecharFora)
-      document.removeEventListener('keydown', fecharEsc)
-    }
-  }, [aberto])
-
-  const primeiro = new Date(ano, mes, 1)
-  const desloc = (primeiro.getDay() + 6) % 7 // segunda = 0
-  const diasNoMes = new Date(ano, mes + 1, 0).getDate()
-  const celulas: Array<{ dia: number; iso: string; item?: DataBaseDetalhe } | null> = []
-  for (let i = 0; i < desloc; i += 1) celulas.push(null)
-  for (let dia = 1; dia <= diasNoMes; dia += 1) {
-    const iso = `${ano}-${String(mes + 1).padStart(2, '0')}-${String(dia).padStart(2, '0')}`
-    celulas.push({ dia, iso, item: mapa.get(iso) })
-  }
-
-  function navegar(delta: number) {
-    const d = new Date(ano, mes + delta, 1)
-    onMesChange(d.getFullYear(), d.getMonth())
-  }
-
-  const anosDisponiveis = (() => {
-    const set = new Set<number>()
-    for (const item of mapa.values()) {
-      const y = Number(item.data_iso.slice(0, 4))
-      if (Number.isFinite(y)) set.add(y)
-    }
-    set.add(ano)
-    return Array.from(set).sort((a, b) => a - b)
-  })()
-
-  const statusTrigger = itemSelecionado?.conciliada
-    ? 'conciliada'
-    : itemSelecionado
-      ? 'pendente'
-      : ''
-
-  return (
-    <div className={`filtro-data-base${aberto ? ' aberto' : ''}`} ref={raizRef}>
-      <span className="filtro-data-label">Data base</span>
-      <button
-        type="button"
-        className={`filtro-data-trigger${statusTrigger ? ` ${statusTrigger}` : ''}`}
-        aria-haspopup="dialog"
-        aria-expanded={aberto}
-        onClick={() => setAberto((v) => !v)}
-      >
-        <span className="filtro-data-valor">{selecionada || '—'}</span>
-        <span className="filtro-data-seta" aria-hidden>
-          ▾
-        </span>
-      </button>
-
-      {aberto && (
-        <div className="calendario-db calendario-popover" role="dialog" aria-label="Calendário data base">
-          <div className="calendario-nav">
-            <button type="button" onClick={() => navegar(-1)} aria-label="Mês anterior">
-              ‹
-            </button>
-            <div className="calendario-titulo">
-              {editandoMes ? (
-                <select
-                  className="calendario-edit-mes"
-                  value={mes}
-                  autoFocus
-                  aria-label="Mês"
-                  onChange={(e) => {
-                    onMesChange(ano, Number(e.target.value))
-                    setEditandoMes(false)
-                  }}
-                  onBlur={() => setEditandoMes(false)}
-                >
-                  {MESES_PT.map((m) => (
-                    <option key={m.valor} value={m.valor}>
-                      {m.nome}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <button
-                  type="button"
-                  className="calendario-edit-btn"
-                  title="Alterar mês"
-                  onClick={() => {
-                    setEditandoAno(false)
-                    setEditandoMes(true)
-                  }}
-                >
-                  {rotuloMesNome(mes)}
-                </button>
-              )}
-              {editandoAno ? (
-                <select
-                  className="calendario-edit-ano"
-                  value={ano}
-                  autoFocus
-                  aria-label="Ano"
-                  onChange={(e) => {
-                    onMesChange(Number(e.target.value), mes)
-                    setEditandoAno(false)
-                  }}
-                  onBlur={() => setEditandoAno(false)}
-                >
-                  {anosDisponiveis.map((y) => (
-                    <option key={y} value={y}>
-                      {y}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <button
-                  type="button"
-                  className="calendario-edit-btn"
-                  title="Alterar ano"
-                  onClick={() => {
-                    setEditandoMes(false)
-                    setEditandoAno(true)
-                  }}
-                >
-                  {ano}
-                </button>
-              )}
+      <section className="painel consignado-painel">
+        <div className="painel-cabecalho">
+          <div>
+            <h2>Consignado Privado</h2>
+            <p className="subtitulo">
+              PF nos cedentes de consignado · VP/PDD do motor · cadastro por
+              documento (nm_cessao_bdr)
+              {consignado?.n_join != null
+                ? ` · ${consignado.n_join} títulos`
+                : ''}
+            </p>
+          </div>
+          {consignado && (
+            <div className="painel-totais">
+              <div className="painel-total">
+                <span>VP</span>
+                <strong>{formatarMoeda(consignado.totais.vp)}</strong>
+              </div>
+              <div className="painel-total">
+                <span>A vencer</span>
+                <strong>{formatarMoeda(consignado.totais.a_vencer)}</strong>
+              </div>
+              <div className="painel-total">
+                <span>Vencidos</span>
+                <strong>{formatarMoeda(consignado.totais.vencidos)}</strong>
+              </div>
+              <div className="painel-total">
+                <span>PDD</span>
+                <strong>{formatarMoeda(consignado.totais.pdd)}</strong>
+              </div>
             </div>
-            <button type="button" onClick={() => navegar(1)} aria-label="Próximo mês">
-              ›
-            </button>
-          </div>
-          <div className="calendario-semana">
-            {['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'].map((d) => (
-              <span key={d}>{d}</span>
-            ))}
-          </div>
-          <div className="calendario-grid">
-            {celulas.map((cel, idx) => {
-              if (!cel) return <span key={`e-${idx}`} className="cal-dia vazio" />
-              const item = cel.item
-              const nomeFeriado = feriados.get(cel.iso)
-              const util = Boolean(item) && !nomeFeriado
-              const classes = [
-                'cal-dia',
-                util ? 'util' : 'inativo',
-                nomeFeriado ? 'feriado' : '',
-                item?.conciliada ? 'conciliada' : '',
-                item && !item.conciliada ? 'pendente' : '',
-                item?.data === selecionada ? 'selecionado' : '',
-              ]
-                .filter(Boolean)
-                .join(' ')
-              return (
-                <button
-                  key={cel.iso}
-                  type="button"
-                  className={classes}
-                  disabled={!util}
-                  title={
-                    nomeFeriado
-                      ? `${cel.iso} · feriado: ${nomeFeriado} · indisponível`
-                      : item
-                        ? `${item.data}${item.conciliada ? ' · conciliada' : ''}${
-                            item.tem_liquidez ? ' · liquidez IDSF' : ''
-                          }${item.pl_estimado != null ? ` · PL est. ${item.pl_estimado}` : ''}`
-                        : 'Indisponível (fim de semana ou sem relatório)'
-                  }
-                  onClick={() => {
-                    if (!item || nomeFeriado) return
-                    onSelect(item.data)
-                    setAberto(false)
-                  }}
-                >
-                  {cel.dia}
-                </button>
-              )
-            })}
-          </div>
-          <div className="calendario-legenda">
-            <span className="leg conciliada">Conciliado</span>
-            <span className="leg pendente">Pendente</span>
-            <span className="leg feriado">Feriado</span>
-          </div>
+          )}
         </div>
-      )}
+        {avisoConsignado && <p className="aviso-inline">{avisoConsignado}</p>}
+        {!consignado || consignado.empresas.length === 0 ? (
+          <p className="vazio">
+            Sem posição de consignado privado para esta data base.
+          </p>
+        ) : (
+          <table className="tabela-aging tabela-consignado">
+            <thead>
+              <tr>
+                <th></th>
+                <th>Empresa</th>
+                <th>VP</th>
+                <th>A vencer</th>
+                <th>Vencidos</th>
+                <th>PDD</th>
+                <th>Qtd</th>
+              </tr>
+            </thead>
+            <tbody>
+              {consignado.empresas.map((emp: ConsignadoEmpresa) => {
+                const chave = emp.empresa_vazia ? '__vazia__' : emp.empresa
+                const aberta = empresaConsignadoAberta === chave
+                return (
+                  <Fragment key={chave}>
+                    <tr
+                      className={`linha-aging${aberta ? ' aberta' : ''}${emp.empresa_vazia ? ' empresa-vazia' : ''}`}
+                      onClick={() =>
+                        setEmpresaConsignadoAberta(aberta ? null : chave)
+                      }
+                    >
+                      <td className="col-expandir">{aberta ? '▼' : '▶'}</td>
+                      <td>
+                        {emp.empresa}
+                        {emp.empresa_vazia ? ' · pendente tratamento' : ''}
+                      </td>
+                      <td>{formatarMoeda(emp.vp)}</td>
+                      <td>{formatarMoeda(emp.a_vencer)}</td>
+                      <td>{formatarMoeda(emp.vencidos)}</td>
+                      <td>{formatarMoeda(emp.pdd)}</td>
+                      <td>{emp.n}</td>
+                    </tr>
+                    {aberta && (
+                      <tr className="linha-detalhe-aging">
+                        <td colSpan={7}>
+                          <table className="tabela-titulos-aging">
+                            <thead>
+                              <tr>
+                                <th>Sacado</th>
+                                <th>Evento</th>
+                                <th>Data</th>
+                                <th>Saída afastamento</th>
+                                <th>VP</th>
+                                <th>A vencer</th>
+                                <th>Vencidos</th>
+                                <th>PDD</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {emp.sacados.map((sac) => {
+                                const linhas =
+                                  sac.eventos.length > 1
+                                    ? sac.eventos.map((ev) => ({
+                                        key: `${sac.doc_sacado}-${ev.tipo_evento}-${ev.entrada}-${ev.saida_afastamento}`,
+                                        sacado: sac.sacado,
+                                        evento: ev.tipo_evento || '—',
+                                        data: ev.entrada || '—',
+                                        saida:
+                                          (ev.tipo_evento || '').toLowerCase() ===
+                                          'afastamento'
+                                            ? ev.saida_afastamento || '—'
+                                            : '—',
+                                        vp: ev.vp,
+                                        a_vencer: ev.a_vencer,
+                                        vencidos: ev.vencidos,
+                                        pdd: ev.pdd,
+                                      }))
+                                    : [
+                                        {
+                                          key: `${sac.doc_sacado}-unico`,
+                                          sacado: sac.sacado,
+                                          evento: sac.tipo_evento || '—',
+                                          data: sac.entrada || '—',
+                                          saida:
+                                            (sac.tipo_evento || '').toLowerCase() ===
+                                            'afastamento'
+                                              ? sac.saida_afastamento || '—'
+                                              : '—',
+                                          vp: sac.vp,
+                                          a_vencer: sac.a_vencer,
+                                          vencidos: sac.vencidos,
+                                          pdd: sac.pdd,
+                                        },
+                                      ]
+                                return linhas.map((linha) => (
+                                  <tr key={linha.key}>
+                                    <td>{linha.sacado}</td>
+                                    <td>{linha.evento}</td>
+                                    <td>{linha.data}</td>
+                                    <td>{linha.saida}</td>
+                                    <td>{formatarMoeda(linha.vp)}</td>
+                                    <td>{formatarMoeda(linha.a_vencer)}</td>
+                                    <td>{formatarMoeda(linha.vencidos)}</td>
+                                    <td>{formatarMoeda(linha.pdd)}</td>
+                                  </tr>
+                                ))
+                              })}
+                            </tbody>
+                          </table>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                )
+              })}
+            </tbody>
+          </table>
+        )}
+      </section>
     </div>
   )
 }
@@ -1225,20 +1183,14 @@ function ConcentracaoTabela({
   titulo,
   itens,
   mostrarPd = false,
-  mostrarRecompraBaixa = false,
-  mostrarBaixa = false,
   colunaValor = 'Valor face',
 }: {
   titulo: string
   itens: ConcentracaoItem[]
   mostrarPd?: boolean
-  mostrarRecompraBaixa?: boolean
-  mostrarBaixa?: boolean
   colunaValor?: string
 }) {
-  const mostraBaixa = mostrarBaixa || mostrarRecompraBaixa
-  const colunas =
-    3 + (mostrarPd ? 1 : 0) + (mostrarRecompraBaixa ? 1 : 0) + (mostraBaixa ? 1 : 0)
+  const colunas = 3 + (mostrarPd ? 1 : 0)
 
   return (
     <div className="painel">
@@ -1250,8 +1202,6 @@ function ConcentracaoTabela({
             <th>{colunaValor}</th>
             <th>Peso</th>
             {mostrarPd && <th>PD estimada</th>}
-            {mostrarRecompraBaixa && <th>% Recompra</th>}
-            {mostraBaixa && <th>% Baixa</th>}
           </tr>
         </thead>
         <tbody>
@@ -1268,16 +1218,6 @@ function ConcentracaoTabela({
                 <td>{formatarMoeda(item.valor)}</td>
                 <td>{item.peso}</td>
                 {mostrarPd && <td>{num(item.pd_estimada).toFixed(2)}%</td>}
-                {mostrarRecompraBaixa && (
-                  <td className={classeAlertaPct(item.perc_recompra)}>
-                    {num(item.perc_recompra).toFixed(2)}%
-                  </td>
-                )}
-                {mostraBaixa && (
-                  <td className={classeAlertaPct(item.perc_baixa)}>
-                    {num(item.perc_baixa).toFixed(2)}%
-                  </td>
-                )}
               </tr>
             ))
           )}

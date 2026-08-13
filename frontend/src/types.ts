@@ -13,6 +13,10 @@ export interface Kpis {
   prazo_medio: number
   hhi: number
   inadimplencia: number
+  /** Face adquirida do início até a data base (denominador da inadimplência) */
+  volume_aquisicoes_historico?: number
+  /** PL SUB / PL consolidado × 100 */
+  subordinacao_pct?: number | null
   receita_projetada: number
   taxa_media: number
   taxa_recompra: number
@@ -169,6 +173,50 @@ export interface Fundo {
   bdr_tp_contabil_mov: string
   ativo: boolean
   observacao?: string | null
+}
+
+export interface ConsignadoTotais {
+  vp: number
+  a_vencer: number
+  vencidos: number
+  pdd: number
+  n: number
+}
+
+export interface ConsignadoEvento extends ConsignadoTotais {
+  tipo_evento: string | null
+  entrada: string | null
+  saida_afastamento: string | null
+}
+
+export interface ConsignadoSacado extends ConsignadoTotais {
+  sacado: string
+  doc_sacado: string | null
+  tipo_evento?: string | null
+  entrada?: string | null
+  saida_afastamento?: string | null
+  eventos: ConsignadoEvento[]
+}
+
+export interface ConsignadoEmpresa extends ConsignadoTotais {
+  empresa: string
+  empresa_vazia: boolean
+  cnpj_empresa?: string | null
+  sacados: ConsignadoSacado[]
+}
+
+export interface RespostaConsignado {
+  data_base: string
+  data_base_iso: string
+  dt_ref_estoque?: string | null
+  dt_ref_estoque_br?: string | null
+  aviso?: string
+  totais: ConsignadoTotais
+  empresas: ConsignadoEmpresa[]
+  n_empresas: number
+  n_linhas: number
+  n_cadastro?: number
+  n_join?: number
 }
 
 export const API_BASE = import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:8003'

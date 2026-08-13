@@ -158,7 +158,7 @@ def datas_base(
             "nota": "PL = DC(BDR) + CC Saldo + Aplicações + Provisões; conciliação = DC BDR × DC IDSF",
             "data_limite": limite.isoformat(),
             "data_limite_br": limite.strftime("%d/%m/%Y"),
-            "atraso_dias_uteis": 2,
+            "atraso_dias_uteis": 1,
             "fonte_carteira": "movimentacoes_bdr",
         }
     except Exception as exc:  # noqa: BLE001
@@ -204,12 +204,133 @@ def post_carregar_liquidez(body: LiquidezLoadBody):
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@app.get("/fidc/atualizacoes")
+def get_atualizacoes():
+    """Datas da última atualização de cada fonte (IDSF, BDR, carteira própria)."""
+    try:
+        from atualizacoes import status_atualizacoes
+
+        return status_atualizacoes()
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/fidc/atualizar")
+def post_atualizar_bases():
+    """Inicia atualização de todas as bases até a última data disponível."""
+    try:
+        from atualizar_bases import iniciar_atualizacao
+
+        return iniciar_atualizacao()
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/fidc/atualizar/status")
+def get_atualizar_status():
+    """Status do job de atualização em background."""
+    try:
+        from atualizar_bases import status_job
+
+        return status_job()
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/fidc/consignado")
+def get_consignado(
+    dataBase: str = Query(..., description="Data base dd/mm/yyyy ou YYYY-MM-DD"),
+):
+    """Consignado Privado (EstoqueBDR no Supabase): empresa → sacado/evento."""
+    try:
+        from consignado import montar_consignado
+
+        return montar_consignado(dataBase)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/fidc/pdd")
+def get_pdd(
+    dataBase: str = Query(..., description="Data base dd/mm/yyyy ou YYYY-MM-DD"),
+):
+    """PDD por empresa (motor): afastamento/demissão/rescisão/NC + histórico."""
+    try:
+        from pdd import montar_pdd
+
+        return montar_pdd(dataBase)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/fidc/passivo")
+def get_passivo(
+    dataBase: str = Query(..., description="Data base dd/mm/yyyy ou YYYY-MM-DD"),
+):
+    """Passivo por classe: PL, qtde, %CDI, cota marcada (app) vs IDSF."""
+    try:
+        from passivo import montar_passivo
+
+        return montar_passivo(dataBase)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+@app.get("/fidc/divergencias")
+def get_divergencias(
+    desde: str | None = Query(None, description="YYYY-MM-DD ou dd/mm/yyyy"),
+    ate: str | None = Query(None, description="YYYY-MM-DD ou dd/mm/yyyy"),
+):
+    """Lista dias com |ΔVP| ou |ΔPDD| (limpo) acima da tolerância (motor × IDSF)."""
+    from divergencias import listar_divergencias
+
+    def _opt(texto: str | None):
+        if not texto:
+            return None
+        from divergencias import _parse_data
+
+        return _parse_data(texto)
+
+    try:
+        return listar_divergencias(desde=_opt(desde), ate=_opt(ate))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/fidc/divergencias/detalhe")
+def get_divergencia_detalhe(
+    dataBase: str = Query(..., description="Data base dd/mm/yyyy ou YYYY-MM-DD"),
+):
+    """Resumo motor × BDR × IDSF e títulos divergentes vs EstoqueBDR do dia."""
+    from divergencias import detalhe_divergencia
+
+    try:
+        return detalhe_divergencia(dataBase)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 @app.get("/fidc/risco")
 def risco_fidc(
     dataBase: str = Query(..., description="Data base no formato dd/mm/yyyy"),
     fundo: str | None = Query(None, description="Código do fundo"),
 ):
-    """Risco pela carteira BDR (aq−liq) + liquidez IDSF. Até D-2."""
+    """Risco pela carteira BDR (aq−liq) + liquidez IDSF. Até D-1."""
     from datetime import datetime
 
     try:
@@ -231,7 +352,7 @@ def risco_fidc(
             status_code=400,
             detail=(
                 f"Data base {dataBase} ainda não liberada. "
-                f"Sistema disponível até D-2 ({limite.strftime('%d/%m/%Y')})."
+                f"Sistema disponível até D-1 ({limite.strftime('%d/%m/%Y')})."
             ),
         )
     from calendario import e_dia_util, e_feriado, nome_feriado

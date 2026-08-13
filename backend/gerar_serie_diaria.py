@@ -35,8 +35,8 @@ def main() -> None:
         marca = "ok " if row.get("conciliada") else "DIV"
         print(
             f"[{time.perf_counter() - t0:>6.0f}s] {dia} {marca} "
-            f"vp={row.get('vp', 0):>14,.2f} Δvp={row.get('delta_vp', 0):>10,.2f} "
-            f"Δpdd={row.get('delta_pdd', 0):>10,.2f}",
+            f"vp={row.get('vp', 0):>14,.2f} dVP={row.get('delta_vp', 0):>10,.2f} "
+            f"dPDD={row.get('delta_pdd', 0):>10,.2f}",
             flush=True,
         )
 

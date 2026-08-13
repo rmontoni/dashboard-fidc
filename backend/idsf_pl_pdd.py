@@ -8,11 +8,16 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
-from datetime import date
+from datetime import date, datetime, timedelta
 from typing import Any
 
 import requests
+
+# Ex.: "COTA MEZANINO ALPHA -  Vcto: 31-12-2049 -> 170,00% CDI"
+_RE_PCT_CDI = re.compile(r"(\d+[.,]\d+)\s*%\s*CDI", re.IGNORECASE)
+_RE_VCTO_ATIVO = re.compile(r"Vcto:\s*(\d{2}-\d{2}-\d{4})", re.IGNORECASE)
 
 IDSF_BASE = "https://prod.idsf.com.br/api/report/GetPortfolioComposition"
 ATIVO_PDD = "ALPHA PDD"
@@ -122,12 +127,82 @@ def _pdd_do_snapshot(snapshot: dict[str, Any]) -> float:
     return float(total)
 
 
-def _pl_do_snapshot(snapshot: dict[str, Any]) -> float:
+def _pl_cota_campos(snapshot: dict[str, Any]) -> tuple[float, float | None, float | None]:
+    """Retorna (PL, qtde_cotas, valor_cota) a partir de PlCota."""
     pl_cota = snapshot.get("PlCota") or {}
     try:
-        return float(pl_cota.get("PL") or 0.0)
+        pl = float(pl_cota.get("PL") or 0.0)
     except (TypeError, ValueError):
-        return 0.0
+        pl = 0.0
+    qtde: float | None
+    valor: float | None
+    try:
+        raw_q = pl_cota.get("Qtde")
+        qtde = float(raw_q) if raw_q is not None and str(raw_q).strip() != "" else None
+    except (TypeError, ValueError):
+        qtde = None
+    try:
+        raw_c = pl_cota.get("Cota")
+        valor = float(raw_c) if raw_c is not None and str(raw_c).strip() != "" else None
+    except (TypeError, ValueError):
+        valor = None
+    return pl, qtde, valor
+
+
+def _pl_do_snapshot(snapshot: dict[str, Any]) -> float:
+    pl, _q, _c = _pl_cota_campos(snapshot)
+    return pl
+
+
+def extrair_pct_cdi_vencimento_snapshot(
+    snapshot: dict[str, Any],
+) -> tuple[float | None, date | None]:
+    """Extrai (%CDI, vencimento) do texto Posicoes[].Ativo da Composition."""
+    pct: float | None = None
+    venc: date | None = None
+    for pos in snapshot.get("Posicoes") or []:
+        ativo = str(pos.get("Ativo") or "")
+        if "CDI" not in ativo.upper():
+            continue
+        if pct is None:
+            m_pct = _RE_PCT_CDI.search(ativo)
+            if m_pct:
+                try:
+                    pct = float(str(m_pct.group(1)).replace(",", "."))
+                except ValueError:
+                    pct = None
+        if venc is None:
+            m_v = _RE_VCTO_ATIVO.search(ativo)
+            if m_v:
+                try:
+                    venc = datetime.strptime(m_v.group(1), "%d-%m-%Y").date()
+                except ValueError:
+                    venc = None
+        if pct is not None and venc is not None:
+            break
+    return pct, venc
+
+
+def extrair_pct_cdi_da_composicao(
+    id_carteira: int,
+    *,
+    token: str | None = None,
+    ref: date | None = None,
+) -> tuple[float | None, date | None]:
+    """Busca um dia recente de Composition e extrai %CDI/vencimento."""
+    fim = ref or date.today()
+    # janela curta para achar um dia útil com posições
+    inicio = fim - timedelta(days=14)
+    try:
+        snaps = buscar_composicao(id_carteira, inicio, fim, token=token)
+    except Exception:  # noqa: BLE001
+        return None, None
+    # preferir o snapshot mais recente com CDI no Ativo
+    for snap in reversed(snaps):
+        pct, venc = extrair_pct_cdi_vencimento_snapshot(snap)
+        if pct is not None:
+            return pct, venc
+    return None, None
 
 
 def _data_posicao(snapshot: dict[str, Any]) -> date | None:
@@ -149,12 +224,15 @@ def extrair_pl_pdd(snapshot: dict[str, Any]) -> dict[str, Any] | None:
     if id_carteira <= 0:
         return None
     apelido = str(snapshot.get("Apelido") or f"Carteira {id_carteira}").strip()
+    pl, qtde, valor_cota = _pl_cota_campos(snapshot)
     return {
         "data_posicao": data_pos.isoformat(),
         "id_carteira": id_carteira,
         "apelido": apelido,
-        "pl": round(_pl_do_snapshot(snapshot), 2),
+        "pl": round(pl, 2),
         "pdd": round(_pdd_do_snapshot(snapshot), 2),
+        "qtde_cotas": round(qtde, 8) if qtde is not None else None,
+        "valor_cota": round(valor_cota, 8) if valor_cota is not None else None,
         "fonte": "idsf_json",
     }
 
@@ -170,6 +248,8 @@ def consolidar_registros(registros: list[dict[str, Any]]) -> dict[str, Any] | No
         "apelido": APELIDO_CONSOLIDADO,
         "pl": round(sum(float(r["pl"]) for r in registros), 2),
         "pdd": round(sum(float(r["pdd"]) for r in registros), 2),
+        "qtde_cotas": None,
+        "valor_cota": None,
         "fonte": "idsf_json",
     }
 

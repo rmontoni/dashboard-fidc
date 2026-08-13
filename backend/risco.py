@@ -33,6 +33,15 @@ def _sum_money(valores) -> float:
     return float(total.quantize(CASAS_DINHEIRO, rounding=ROUND_HALF_UP))
 
 
+def _subordinacao_kpi(data_ref: date) -> float | None:
+    try:
+        from passivo import calcular_subordinacao_para_data
+
+        return calcular_subordinacao_para_data(data_ref)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _posicoes_from_row(row: dict) -> dict:
     detalhes = row.get("detalhes") or {}
     if isinstance(detalhes, str):
@@ -92,6 +101,34 @@ def carregar_liquidez_data(data_pos: date) -> dict:
     return buscar_posicoes_caixa_aplicacoes(data_pos)
 
 
+def pl_motor_do_dia(data_pos: date) -> dict:
+    """PL do motor: DC (VP−PDD da série) + CC + aplicações + provisões + VALID.
+
+    Não usa o PL consolidado da IDSF.
+    """
+    from carteira_movimentacoes import mapa_dc_bdr_diario
+
+    serie = mapa_dc_bdr_diario().get(data_pos.isoformat()) or {}
+    if not serie:
+        return {"pl": None, "sem_serie": True}
+
+    pos = carregar_liquidez_data(data_pos)
+    dc = _money_float(float(serie.get("vp") or 0) - float(serie.get("pdd") or 0))
+    caixa = _money_float(pos.get("total_caixa") or 0)
+    aplicacoes = _money_float(pos.get("total_aplicacoes") or 0)
+    provisoes = _money_float(pos.get("total_provisoes") or 0)
+    aporte = _money_float(pos.get("total_passivo_aporte") or 0)
+    return {
+        "pl": _money_float(dc + caixa + aplicacoes + provisoes + aporte),
+        "dc_bdr": dc,
+        "caixa": caixa,
+        "aplicacoes": aplicacoes,
+        "provisoes": provisoes,
+        "passivo_aporte": aporte,
+        "sem_serie": False,
+    }
+
+
 def calcular_pl_liquidez(data_base_filtro: str) -> dict:
     """
     PL dia a dia sem conciliação de estoque:
@@ -147,6 +184,7 @@ def calcular_pl_liquidez(data_base_filtro: str) -> dict:
             "prazo_medio": 0.0,
             "hhi": 0,
             "inadimplencia": 0.0,
+            "volume_aquisicoes_historico": 0.0,
             "receita_projetada": 0.0,
             "taxa_media": 0.0,
             "taxa_recompra": float(taxas_mov.get("taxa_recompra") or 0.0),
@@ -156,6 +194,7 @@ def calcular_pl_liquidez(data_base_filtro: str) -> dict:
             "credit_var_historico_95": 0.0,
             "credit_var_parametrico_95": 0.0,
             "n_obs": 0,
+            "subordinacao_pct": _subordinacao_kpi(data_pos),
         },
         "posicoes_liquidez": pos,
         "top_cedentes": [],
@@ -326,6 +365,19 @@ def calcular_risco_fidc(data_base_filtro: str) -> dict:
     )
 
     vol_atraso = df_atual.loc[condicao_atraso, "valor_face"].sum()
+
+    # Inadimplência = face vencida / aquisições históricas até a data base.
+    from aquisicoes_volume import total_aquisicoes_ate
+
+    aq_hist = total_aquisicoes_ate(data_alvo.date())
+    vol_aquisicoes_hist = float(aq_hist.get("total") or 0.0)
+    if vol_aquisicoes_hist > 0:
+        inadimplencia_pct = float(vol_atraso / vol_aquisicoes_hist) * 100
+    elif vol_face_total > 0:
+        # Fallback se o cache/BD de aquisições ainda não estiver disponível.
+        inadimplencia_pct = float(vol_atraso / vol_face_total) * 100
+    else:
+        inadimplencia_pct = 0.0
 
     # PDD: preferir vl_pdd calculado na marcação (VP × faixa); senão aging por face
     df_atual["dias_atraso_calc"] = (data_alvo - df_atual["data_vencimento"]).dt.days
@@ -899,15 +951,15 @@ def calcular_risco_fidc(data_base_filtro: str) -> dict:
             "valor_presente": round(valor_presente, 2),
             "prazo_medio": round(prazo_medio, 1),
             "hhi": int(round(float(hhi_calc), 0)),
-            "inadimplencia": round(float(vol_atraso / vol_face_total) * 100, 2)
-            if vol_face_total > 0
-            else 0.0,
+            "inadimplencia": round(float(inadimplencia_pct), 2),
+            "volume_aquisicoes_historico": round(float(vol_aquisicoes_hist), 2),
             "receita_projetada": round(float(receita_projetada_total), 2),
             "taxa_media": round(float(taxa_media), 2),
             "taxa_recompra": round(float(taxa_recompra), 2),
             "taxa_baixa": round(float(taxa_baixa), 2),
             "taxa_baixa_recompra": round(float(taxa_baixa_recompra), 2),
             "tem_recompra": bool(tem_recompra),
+            "subordinacao_pct": _subordinacao_kpi(data_alvo.date()),
             **calcular_credit_var(
                 id_carteira=0,
                 confianca=0.95,
