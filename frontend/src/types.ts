@@ -219,6 +219,10 @@ export interface RespostaConsignado {
   n_join?: number
 }
 
-export const API_BASE = String(
-  import.meta.env.VITE_API_URL || 'http://127.0.0.1:8003',
-).replace(/\/$/, '')
+export const API_BASE = (() => {
+  const raw = import.meta.env.VITE_API_URL
+  if (typeof raw === 'string' && raw.trim() !== '') {
+    return raw.trim().replace(/\/$/, '')
+  }
+  return import.meta.env.PROD ? '' : 'http://127.0.0.1:8003'
+})()

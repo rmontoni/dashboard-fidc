@@ -43,29 +43,15 @@ npm run dev
 
 App: http://localhost:5173
 
-## Deploy no Vercel (frontend)
+## Deploy no Vercel
 
-O Vercel hospeda só o React. A API FastAPI (pandas, cache BDR, jobs longos) precisa rodar em outro host (VPS, Railway, Render, Fly.io) e ficar acessível em HTTPS.
+O `vercel.json` declara dois serviços (Vite + FastAPI) no mesmo projeto. O front chama `/fidc/...` no mesmo domínio; não precisa de `VITE_API_URL` no Vercel.
 
-1. Suba o backend com HTTPS e, no `backend/.env`, libere o front:
+1. Importe o repositório na raiz (`main`). Se a tela ainda pedir o `vercel.json` de serviços, clique em **Refresh** depois deste commit.
+2. Em **Environment Variables**, copie as chaves do `backend/.env` (Supabase, IDSF, BDR). Sem isso a API sobe sem dados.
+3. Cache BDR (`backend/data/`) não vai no git: na primeira execução a API reconstrói eventos a partir do Supabase (pode demorar).
 
-```env
-CORS_ORIGINS=https://SEU-PROJETO.vercel.app
-```
-
-Previews `*.vercel.app` já entram pelo CORS padrão.
-
-2. No Vercel: **Import Git Repository** (raiz do repo). O `vercel.json` já aponta o build para `frontend/`.
-
-3. Em **Settings → Environment Variables**, na Production (e Preview):
-
-```env
-VITE_API_URL=https://sua-api.exemplo.com
-```
-
-Sem barra no final. A variável entra no build; depois de mudar, faça um novo deploy.
-
-4. Domínio próprio: acrescente a origem em `CORS_ORIGINS` no backend.
+Timeouts longos (Inadimplência / Fluxo de caixa) podem estourar no plano Hobby.
 
 ### 3. Série diária PL/PDD (Credit VaR — carga)
 
