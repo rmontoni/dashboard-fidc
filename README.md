@@ -43,6 +43,30 @@ npm run dev
 
 App: http://localhost:5173
 
+## Deploy no Vercel (frontend)
+
+O Vercel hospeda só o React. A API FastAPI (pandas, cache BDR, jobs longos) precisa rodar em outro host (VPS, Railway, Render, Fly.io) e ficar acessível em HTTPS.
+
+1. Suba o backend com HTTPS e, no `backend/.env`, libere o front:
+
+```env
+CORS_ORIGINS=https://SEU-PROJETO.vercel.app
+```
+
+Previews `*.vercel.app` já entram pelo CORS padrão.
+
+2. No Vercel: **Import Git Repository** (raiz do repo). O `vercel.json` já aponta o build para `frontend/`.
+
+3. Em **Settings → Environment Variables**, na Production (e Preview):
+
+```env
+VITE_API_URL=https://sua-api.exemplo.com
+```
+
+Sem barra no final. A variável entra no build; depois de mudar, faça um novo deploy.
+
+4. Domínio próprio: acrescente a origem em `CORS_ORIGINS` no backend.
+
 ### 3. Série diária PL/PDD (Credit VaR — carga)
 
 1. No Supabase SQL Editor, execute `backend/sql/fidc_pl_pdd_diario.sql`.

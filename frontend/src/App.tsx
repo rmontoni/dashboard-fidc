@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import Configuracoes from './Configuracoes'
 import Dashboard from './Dashboard'
 import Divergencias from './Divergencias'
+import FluxoCaixa from './FluxoCaixa'
+import Inadimplencia from './Inadimplencia'
 import Passivo from './Passivo'
 import Pdd from './Pdd'
 import type { Fundo } from './types'
@@ -13,6 +15,7 @@ type Pagina =
   | 'passivo'
   | 'pdd'
   | 'inadimplencia'
+  | 'fluxo-caixa'
   | 'configuracoes'
   | 'divergencias'
 
@@ -41,19 +44,6 @@ type StatusAtualizacao = {
 const STORAGE_FUNDO = 'fidc_fundo_selecionado_id'
 const STORAGE_ATUALIZACOES_ABERTO = 'fidc_atualizacoes_aberto'
 export const STORAGE_DATA_BASE = 'fidc_data_base'
-
-function PaginaEmBranco({ titulo }: { titulo: string }) {
-  return (
-    <div className="dashboard">
-      <header className="topbar">
-        <div>
-          <p className="eyebrow">{titulo}</p>
-          <h1>{titulo}</h1>
-        </div>
-      </header>
-    </div>
-  )
-}
 
 function App() {
   const [pagina, setPagina] = useState<Pagina>('dashboard')
@@ -216,6 +206,13 @@ function App() {
           </button>
           <button
             type="button"
+            className={pagina === 'fluxo-caixa' ? 'nav-item ativo' : 'nav-item'}
+            onClick={() => setPagina('fluxo-caixa')}
+          >
+            Fluxo de caixa
+          </button>
+          <button
+            type="button"
             className={pagina === 'configuracoes' ? 'nav-item ativo' : 'nav-item'}
             onClick={() => setPagina('configuracoes')}
           >
@@ -296,7 +293,8 @@ function App() {
         {pagina === 'dashboard' && <Dashboard fundoNome={fundo?.nome} />}
         {pagina === 'passivo' && <Passivo />}
         {pagina === 'pdd' && <Pdd />}
-        {pagina === 'inadimplencia' && <PaginaEmBranco titulo="Inadimplência" />}
+        {pagina === 'inadimplencia' && <Inadimplencia />}
+        {pagina === 'fluxo-caixa' && <FluxoCaixa />}
         {pagina === 'configuracoes' && (
           <Configuracoes
             fundoSelecionadoId={fundo?.id ?? null}

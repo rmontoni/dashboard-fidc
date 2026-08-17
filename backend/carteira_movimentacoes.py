@@ -278,32 +278,50 @@ def reconstruir_eventos(cnpj: str | None = None, *, forcar: bool = False) -> dic
     return meta
 
 
-def _carregar_eventos(
-    *,
-    desde: date | None = DATA_MINIMA,
-    ate: date | None = None,
-) -> list[dict[str, Any]]:
+_EVENTOS_MEM: tuple[tuple[float, int], list[dict[str, Any]]] | None = None
+
+
+def _idx_evento_depois(eventos: list[dict[str, Any]], data_iso: str) -> int:
+    """Primeiro índice com data > data_iso (eventos ordenados por data)."""
+    lo, hi = 0, len(eventos)
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if str(eventos[mid].get("data") or "") <= data_iso:
+            lo = mid + 1
+        else:
+            hi = mid
+    return lo
+
+
+def _eventos_todos() -> list[dict[str, Any]]:
+    """JSONL parseado uma vez; invalida quando o arquivo muda."""
+    global _EVENTOS_MEM
     if not CACHE_PATH.exists():
         reconstruir_eventos(forcar=True)
+    st = CACHE_PATH.stat()
+    sig = (st.st_mtime, st.st_size)
+    if _EVENTOS_MEM is not None and _EVENTOS_MEM[0] == sig:
+        return _EVENTOS_MEM[1]
     eventos: list[dict[str, Any]] = []
-    corte = desde.isoformat() if desde else None
-    limite = ate.isoformat() if ate else None
     with CACHE_PATH.open(encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()
             if not line:
                 continue
-            ev = json.loads(line)
-            data_ev = str(ev.get("data") or "")
-            if corte and data_ev < corte:
-                continue
-            # Na data mínima: só movimentos posteriores ao estoque-base
-            if corte and data_ev == corte:
-                continue
-            if limite and data_ev > limite:
-                break
-            eventos.append(ev)
+            eventos.append(json.loads(line))
+    _EVENTOS_MEM = (sig, eventos)
     return eventos
+
+
+def _carregar_eventos(
+    *,
+    desde: date | None = DATA_MINIMA,
+    ate: date | None = None,
+) -> list[dict[str, Any]]:
+    todos = _eventos_todos()
+    inicio = _idx_evento_depois(todos, desde.isoformat()) if desde else 0
+    fim = _idx_evento_depois(todos, ate.isoformat()) if ate else len(todos)
+    return todos[inicio:fim]
 
 
 def _row_get(row: pd.Series, *names: str) -> Any:
@@ -1226,6 +1244,7 @@ def carregar_carteira_movimentacoes(
                 "sacado",
                 "tipo_recebivel",
                 "data_emissao",
+                "data_aquisicao",
                 "data_vencimento",
                 "valor_face",
                 "taxa_operacao",
@@ -1262,6 +1281,7 @@ def carregar_carteira_movimentacoes(
                 "sacado",
                 "tipo_recebivel",
                 "data_emissao",
+                "data_aquisicao",
                 "data_vencimento",
                 "valor_face",
                 "taxa_operacao",
@@ -1278,6 +1298,7 @@ def carregar_carteira_movimentacoes(
     for pos in abertos.values():
         venc = _parse_data_campo(pos.get("data_vencimento"))
         emissao = _parse_data_campo(pos.get("data_emissao"))
+        aquisicao = _parse_data_campo(pos.get("data_aquisicao"))
         status = "VENCIDO" if (venc and venc < data_limite) else "A VENCER"
         vp_adm = pos.get("vl_presente_adm")
         rows.append(
@@ -1288,6 +1309,7 @@ def carregar_carteira_movimentacoes(
                 "sacado": pos.get("sacado") or "",
                 "tipo_recebivel": pos.get("tipo_recebivel") or "",
                 "data_emissao": emissao,
+                "data_aquisicao": aquisicao,
                 "data_vencimento": venc,
                 "valor_face": float(pos.get("valor_face") or 0),
                 "taxa_operacao": float(pos.get("taxa_operacao") or 0),
@@ -1302,6 +1324,7 @@ def carregar_carteira_movimentacoes(
 
     df = pd.DataFrame(rows)
     df["data_emissao"] = pd.to_datetime(df["data_emissao"], errors="coerce")
+    df["data_aquisicao"] = pd.to_datetime(df["data_aquisicao"], errors="coerce")
     df["data_vencimento"] = pd.to_datetime(df["data_vencimento"], errors="coerce")
     return df
 

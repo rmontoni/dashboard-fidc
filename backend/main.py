@@ -1,3 +1,5 @@
+import os
+
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -14,12 +16,28 @@ from risco import calcular_pl_liquidez, calcular_risco_fidc
 
 app = FastAPI(title="API Risco FIDC", version="1.0.0")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
+
+def _origens_cors() -> list[str]:
+    origens = [
         "http://localhost:5173",
         "http://127.0.0.1:5173",
-    ],
+        "http://localhost:4173",
+        "http://127.0.0.1:4173",
+    ]
+    for parte in os.getenv("CORS_ORIGINS", "").split(","):
+        origem = parte.strip().rstrip("/")
+        if origem and origem not in origens:
+            origens.append(origem)
+    return origens
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_origens_cors(),
+    allow_origin_regex=os.getenv(
+        "CORS_ORIGIN_REGEX",
+        r"https://([a-z0-9-]+\.)*vercel\.app",
+    ),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -263,6 +281,40 @@ def get_pdd(
         from pdd import montar_pdd
 
         return montar_pdd(dataBase)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/fidc/inadimplencia")
+def get_inadimplencia(
+    dataBase: str = Query(..., description="Data base dd/mm/yyyy ou YYYY-MM-DD"),
+):
+    """Matriz de vencidos do consignado privado: mês de cessão × mês de vencimento."""
+    try:
+        from inadimplencia import montar_inadimplencia
+
+        return montar_inadimplencia(dataBase)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/fidc/fluxo-caixa")
+def get_fluxo_caixa(
+    dataBase: str = Query(..., description="Data base dd/mm/yyyy ou YYYY-MM-DD"),
+):
+    """Aquisição × liquidações do consignado privado: TIR mensal e %CDI."""
+    try:
+        from inadimplencia import montar_fluxo_caixa
+
+        return montar_fluxo_caixa(dataBase)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:

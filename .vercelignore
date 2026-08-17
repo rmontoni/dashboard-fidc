@@ -1,0 +1,11 @@
+backend
+backend/data
+backend/.env
+.venv
+venv
+exports
+*.pyc
+__pycache__
+.cursor
+canvases
+data
