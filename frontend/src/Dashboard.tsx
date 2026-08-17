@@ -252,7 +252,20 @@ function Dashboard({ fundoNome }: DashboardProps) {
             `${API_BASE}/fidc/consignado?dataBase=${encodeURIComponent(dataBaseFiltro)}`,
           ),
         ])
-        const dados = await res.json()
+        const bruto = await res.text()
+        let dados: Record<string, unknown> = {}
+        try {
+          dados = bruto ? (JSON.parse(bruto) as Record<string, unknown>) : {}
+        } catch {
+          setErro(
+            res.status
+              ? `Falha ao buscar risco (HTTP ${res.status}).`
+              : 'Falha ao buscar dados de risco na API.',
+          )
+          setIndicadores(KPI_VAZIO)
+          setPosicoesLiquidez(POSICOES_VAZIAS)
+          return
+        }
 
         if (resCons.ok) {
           const cons = (await resCons.json()) as RespostaConsignado
@@ -341,7 +354,12 @@ function Dashboard({ fundoNome }: DashboardProps) {
         setFaixaAgingAberta(null)
       } catch (error) {
         console.error('Erro na API Python:', error)
-        setErro('Falha ao buscar dados de risco na API.')
+        const msg = error instanceof Error ? error.message : ''
+        setErro(
+          /timeout|network|failed to fetch|aborted/i.test(msg)
+            ? 'A API de risco não respondeu a tempo. No Vercel o cache BDR não está disponível — use o backend local para o motor completo.'
+            : 'Falha ao buscar dados de risco na API.',
+        )
       } finally {
         setACarregar(false)
       }

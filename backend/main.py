@@ -427,4 +427,8 @@ def risco_fidc(
             ),
         )
     # Motor sempre pelas movimentações BDR (sem BD_Estoque)
+    from carteira_movimentacoes import CACHE_PATH
+
+    if os.getenv("VERCEL") and not CACHE_PATH.exists():
+        return calcular_pl_liquidez(dataBase)
     return calcular_risco_fidc(dataBase)

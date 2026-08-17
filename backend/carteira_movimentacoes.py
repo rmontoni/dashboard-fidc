@@ -10,6 +10,7 @@ Rebuild: python carteira_movimentacoes.py --forcar
 from __future__ import annotations
 
 import json
+import os
 from datetime import date, datetime, timezone
 from pathlib import Path
 from collections.abc import Callable
@@ -29,6 +30,11 @@ RELATORIOS_DIR = Path(__file__).resolve().parent / "data" / "relatorios"
 ESTOQUE_BASE_PATH = RELATORIOS_DIR / "EstoqueBDR_2024-05-31.csv"
 DATA_MINIMA = date(2024, 5, 31)
 PAGE_SIZE = 1000
+
+
+def _sem_disco_persistente() -> bool:
+    """Vercel Functions não guardam o JSONL de eventos entre requests."""
+    return bool(os.getenv("VERCEL"))
 
 TOLERANCIA_DC_ABS = 500.0
 TOLERANCIA_DC_PCT = 0.0001
@@ -1236,6 +1242,28 @@ def carregar_carteira_movimentacoes(
             return pd.DataFrame()
 
     if data_limite < DATA_MINIMA:
+        return pd.DataFrame(
+            columns=[
+                "data_base",
+                "documento",
+                "cedente",
+                "sacado",
+                "tipo_recebivel",
+                "data_emissao",
+                "data_aquisicao",
+                "data_vencimento",
+                "valor_face",
+                "taxa_operacao",
+                "valor_descontado",
+                "fee",
+                "status",
+                "vl_presente_adm",
+                "vl_pdd",
+                "fx_pdd",
+            ]
+        )
+
+    if not CACHE_PATH.exists() and _sem_disco_persistente():
         return pd.DataFrame(
             columns=[
                 "data_base",

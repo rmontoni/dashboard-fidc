@@ -240,7 +240,7 @@ function App() {
           )}
           {!atualizando && statusAtualizacao?.status === 'erro' && statusAtualizacao.erro && (
             <span className="sidebar-atualizar-erro" title={statusAtualizacao.erro}>
-              Falha na atualização
+              {statusAtualizacao.erro}
             </span>
           )}
           {!atualizando && statusAtualizacao?.status === 'ok' && (

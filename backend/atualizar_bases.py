@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import builtins
+import os
 import sys
 import threading
 import traceback
@@ -374,6 +375,14 @@ def rodar_atualizacao() -> None:
 
 
 def iniciar_atualizacao() -> dict[str, Any]:
+    if os.getenv("VERCEL"):
+        return {
+            "aceito": False,
+            "motivo": (
+                "Atualizar não roda no Vercel: não há disco persistente nem job "
+                "em background. Execute no backend local (python -m uvicorn …)."
+            ),
+        }
     with _lock:
         if _estado.get("status") == "running":
             return {"aceito": False, "motivo": "Já existe uma atualização em andamento.", **dict(_estado)}
