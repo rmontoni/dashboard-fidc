@@ -5,7 +5,7 @@ import { API_BASE } from './types'
 import './App.css'
 
 type Celula = { valor: number; n: number }
-type TotalEixo = { mes: string; valor: number; n: number }
+type TotalEixo = { mes: string; valor: number; n: number; aquisicao?: number }
 type CelulaVnp = {
   pct: number
   vnp: number
@@ -18,6 +18,7 @@ type TotalVnpLinha = {
   vnp: number
   vencimentos: number
   a_vencer: number
+  aquisicao?: number
 }
 type TotalVnpColuna = {
   mes: string
@@ -39,6 +40,7 @@ type MatrizVnp = {
     vnp: number
     vencimentos: number
     a_vencer: number
+    aquisicao?: number
     n: number
   }
   max_pct: number
@@ -126,19 +128,6 @@ export default function Inadimplencia() {
   const [erro, setErro] = useState<string | null>(null)
   const [carregando, setCarregando] = useState(false)
   const [ano, setAno] = useState(() => localStorage.getItem(STORAGE_ANO) || '')
-  const [hover, setHover] = useState<{
-    linha: string
-    coluna: string
-    valor: number
-    n: number
-  } | null>(null)
-  const [hoverVnp, setHoverVnp] = useState<{
-    linha: string
-    coluna: string
-    pct: number
-    vnp: number
-    vencimentos: number
-  } | null>(null)
 
   const dataSelecionada = datasDetalhe.find((d) => d.data === dataBase)
   const mapaDatas = new Map(datasDetalhe.map((d) => [d.data_iso, d]))
@@ -272,7 +261,11 @@ export default function Inadimplencia() {
       }
       totalValor += valor
       totalN += n
-      return { valor, n }
+      return {
+        valor,
+        n,
+        aquisicao: dados.totais_linha[i]?.aquisicao ?? 0,
+      }
     })
     const totaisColuna = idxColunas.map((j) => {
       let valor = 0
@@ -284,8 +277,18 @@ export default function Inadimplencia() {
       }
       return { valor, n }
     })
+    const totalAquisicao = totaisLinha.reduce((s, t) => s + (t.aquisicao || 0), 0)
 
-    return { idxLinhas, idxColunas, totaisLinha, totaisColuna, max, totalValor, totalN }
+    return {
+      idxLinhas,
+      idxColunas,
+      totaisLinha,
+      totaisColuna,
+      max,
+      totalValor,
+      totalN,
+      totalAquisicao,
+    }
   }, [dados, ano])
 
   const visaoVnp = useMemo(() => {
@@ -316,17 +319,22 @@ export default function Inadimplencia() {
     let vnp = 0
     let vencimentos = 0
     let aVencer = 0
+    let aquisicao = 0
     const totaisLinha = celulas.map((row, ri) => {
       const last = row.at(-1)
-      const av = m.totais_linha[idxLinhas[ri]]?.a_vencer ?? 0
+      const totOrig = m.totais_linha[idxLinhas[ri]]
+      const av = totOrig?.a_vencer ?? 0
+      const aq = totOrig?.aquisicao ?? 0
       vnp += last?.vnp ?? 0
       vencimentos += last?.vencimentos ?? 0
       aVencer += av
+      aquisicao += aq
       return {
         pct: last?.pct ?? 0,
         vnp: last?.vnp ?? 0,
         vencimentos: last?.vencimentos ?? 0,
         a_vencer: av,
+        aquisicao: aq,
       }
     })
     const totaisColuna = idxColunas.map((_, k) => {
@@ -350,6 +358,7 @@ export default function Inadimplencia() {
       vnp,
       vencimentos,
       aVencer,
+      aquisicao,
     }
   }, [dados, ano])
 
@@ -358,7 +367,6 @@ export default function Inadimplencia() {
     localStorage.setItem(STORAGE_ANO, proximo)
   }
 
-  const total = dados?.total
   const max = visao?.max ?? 0
 
   return (
@@ -367,10 +375,6 @@ export default function Inadimplencia() {
         <div>
           <p className="eyebrow">Inadimplência · consignado privado</p>
           <h1>Vencidos por cessão — {dataBase || '…'}</h1>
-          <p className="subtitulo">
-            Linhas: 12 meses de cessão · colunas: vencidos até o mês da data base ·
-            valor de face · BMP, Via Capital e Cartos
-          </p>
         </div>
         <div className="topbar-direita">
           <CalendarioDataBase
@@ -383,22 +387,6 @@ export default function Inadimplencia() {
             onMesChange={(ano, mes) => setMesCalendario({ ano, mes })}
             onSelect={selecionarData}
           />
-          {total && (
-            <div className="painel-totais">
-              <div className="painel-total">
-                <span>Face vencida</span>
-                <strong>{formatarMoeda(total.valor)}</strong>
-              </div>
-              <div className="painel-total">
-                <span>% do consignado</span>
-                <strong>{formatarPct(total.pct)}</strong>
-              </div>
-              <div className="painel-total">
-                <span>Títulos vencidos</span>
-                <strong>{total.n.toLocaleString('pt-BR')}</strong>
-              </div>
-            </div>
-          )}
         </div>
       </header>
 
@@ -435,121 +423,11 @@ export default function Inadimplencia() {
         <p className="vazio">Sem títulos de consignado privado nesta data.</p>
       )}
 
-      {!carregando && dados && dados.linhas.length > 0 && (
-        <section className="painel">
-          <div className="painel-cabecalho">
-            <div>
-              <h2>Matriz de vencidos</h2>
-              <p className="subtitulo">
-                Cor mais forte = maior valor de face vencido
-                {ano !== ANO_TODOS
-                  ? ` · cessão ${ano} · vencidos até o mês atual`
-                  : ' · todos os anos'}
-                {visao ? ` · ${formatarMoeda(visao.totalValor)}` : ''}
-                {hover ? (
-                  <>
-                    {' '}
-                    · {hover.linha} → {hover.coluna}: {formatarMoeda(hover.valor)} (
-                    {hover.n} tít.)
-                  </>
-                ) : null}
-              </p>
-            </div>
-            <div className="inad-escala" aria-hidden>
-              <span>menor</span>
-              <span className="inad-escala-barra" />
-              <span>maior</span>
-            </div>
-          </div>
-          {visao && visao.idxLinhas.length > 0 && visao.idxColunas.length > 0 ? (
-          <div className="inad-matriz-scroll">
-            <table className="inad-matriz">
-              <thead>
-                <tr>
-                  <th className="inad-canto">Cessão \\ Vencido</th>
-                  {visao.idxColunas.map((j) => (
-                    <th key={dados.colunas[j]}>{dados.labels_coluna[j]}</th>
-                  ))}
-                  <th className="inad-total-col">Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                {visao.idxLinhas.map((i, ri) => {
-                  const totL = visao.totaisLinha[ri]
-                  return (
-                    <tr key={dados.linhas[i]}>
-                      <th>{dados.labels_linha[i]}</th>
-                      {visao.idxColunas.map((j) => {
-                        const cel = dados.celulas[i]?.[j] ?? { valor: 0, n: 0 }
-                        const { bg, fg } = corCelula(cel.valor, max)
-                        return (
-                          <td
-                            key={dados.colunas[j]}
-                            style={{ background: bg, color: fg }}
-                            title={`${dados.labels_linha[i]} × ${dados.labels_coluna[j]}: ${formatarMoeda(cel.valor)} (${cel.n} títulos)`}
-                            onMouseEnter={() =>
-                              setHover({
-                                linha: dados.labels_linha[i],
-                                coluna: dados.labels_coluna[j],
-                                valor: cel.valor,
-                                n: cel.n,
-                              })
-                            }
-                            onMouseLeave={() => setHover(null)}
-                          >
-                            {formatarMoedaCurta(cel.valor)}
-                          </td>
-                        )
-                      })}
-                      <td className="inad-total-cel">
-                        {formatarMoedaCurta(totL?.valor)}
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-              <tfoot>
-                <tr>
-                  <th>Total</th>
-                  {visao.totaisColuna.map((tot, k) => (
-                    <td key={dados.colunas[visao.idxColunas[k]]} className="inad-total-cel">
-                      {formatarMoedaCurta(tot.valor)}
-                    </td>
-                  ))}
-                  <td className="inad-total-cel inad-total-geral">
-                    {formatarMoedaCurta(visao.totalValor)}
-                  </td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
-          ) : (
-            <p className="vazio">Sem vencidos neste ano.</p>
-          )}
-        </section>
-      )}
-
       {!carregando && dados?.matriz_vnp && dados.matriz_vnp.linhas.length > 0 && (
         <section className="painel">
           <div className="painel-cabecalho">
             <div>
               <h2>VNP / vencimentos</h2>
-              <p className="subtitulo">
-                % VNP acumulado (soma do não pago / soma dos vencimentos até o mês)
-                {ano !== ANO_TODOS
-                  ? ` · cessão ${ano} · até o mês atual`
-                  : ' · todos os anos'}
-                {visaoVnp
-                  ? ` · ${formatarPct(visaoVnp.pct)} · a vencer ${formatarMoeda(visaoVnp.aVencer)}`
-                  : ''}
-                {hoverVnp ? (
-                  <>
-                    {' '}
-                    · {hoverVnp.linha} → {hoverVnp.coluna}: {formatarPct(hoverVnp.pct)}{' '}
-                    ({formatarMoeda(hoverVnp.vnp)} / {formatarMoeda(hoverVnp.vencimentos)})
-                  </>
-                ) : null}
-              </p>
             </div>
             <div className="inad-escala" aria-hidden>
               <span>menor %</span>
@@ -563,6 +441,7 @@ export default function Inadimplencia() {
                 <thead>
                   <tr>
                     <th className="inad-canto">Cessão \\ Vencimento</th>
+                    <th className="inad-total-col">Aquisição</th>
                     {visaoVnp.idxColunas.map((j) => (
                       <th key={dados.matriz_vnp!.colunas[j]}>
                         {dados.matriz_vnp!.labels_coluna[j]}
@@ -579,6 +458,12 @@ export default function Inadimplencia() {
                     return (
                       <tr key={mv.linhas[i]}>
                         <th>{mv.labels_linha[i]}</th>
+                        <td
+                          className="inad-total-cel"
+                          title={`Aquisição ${formatarMoeda(totL?.aquisicao)}`}
+                        >
+                          {formatarMoedaCurta(totL?.aquisicao)}
+                        </td>
                         {visaoVnp.idxColunas.map((j, k) => {
                           const cel = visaoVnp.celulas[ri]?.[k]
                           const tem = (cel?.vencimentos ?? 0) > 0
@@ -595,18 +480,6 @@ export default function Inadimplencia() {
                                   ? `${mv.labels_linha[i]} até ${mv.labels_coluna[j]}: ${formatarPct(cel!.pct)} · VNP acum. ${formatarMoeda(cel!.vnp)} / venc. ${formatarMoeda(cel!.vencimentos)}`
                                   : `${mv.labels_linha[i]} × ${mv.labels_coluna[j]}: sem vencimentos`
                               }
-                              onMouseEnter={() =>
-                                tem
-                                  ? setHoverVnp({
-                                      linha: mv.labels_linha[i],
-                                      coluna: mv.labels_coluna[j],
-                                      pct: cel!.pct,
-                                      vnp: cel!.vnp,
-                                      vencimentos: cel!.vencimentos,
-                                    })
-                                  : setHoverVnp(null)
-                              }
-                              onMouseLeave={() => setHoverVnp(null)}
                             >
                               {tem ? formatarPct(cel!.pct) : ''}
                             </td>
@@ -628,6 +501,12 @@ export default function Inadimplencia() {
                 <tfoot>
                   <tr>
                     <th>Total</th>
+                    <td
+                      className="inad-total-cel inad-total-geral"
+                      title={`Aquisição ${formatarMoeda(visaoVnp.aquisicao)}`}
+                    >
+                      {formatarMoedaCurta(visaoVnp.aquisicao)}
+                    </td>
                     {visaoVnp.totaisColuna.map((tot, k) => (
                       <td
                         key={dados.matriz_vnp!.colunas[visaoVnp.idxColunas[k]]}
@@ -652,6 +531,90 @@ export default function Inadimplencia() {
             </div>
           ) : (
             <p className="vazio">Sem vencimentos neste recorte.</p>
+          )}
+        </section>
+      )}
+
+      {!carregando && dados && dados.linhas.length > 0 && (
+        <section className="painel">
+          <div className="painel-cabecalho">
+            <div>
+              <h2>Matriz de vencidos</h2>
+            </div>
+            <div className="inad-escala" aria-hidden>
+              <span>menor</span>
+              <span className="inad-escala-barra" />
+              <span>maior</span>
+            </div>
+          </div>
+          {visao && visao.idxLinhas.length > 0 && visao.idxColunas.length > 0 ? (
+          <div className="inad-matriz-scroll">
+            <table className="inad-matriz">
+              <thead>
+                <tr>
+                  <th className="inad-canto">Cessão \\ Vencido</th>
+                  <th className="inad-total-col">Aquisição</th>
+                  {visao.idxColunas.map((j) => (
+                    <th key={dados.colunas[j]}>{dados.labels_coluna[j]}</th>
+                  ))}
+                  <th className="inad-total-col">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visao.idxLinhas.map((i, ri) => {
+                  const totL = visao.totaisLinha[ri]
+                  return (
+                    <tr key={dados.linhas[i]}>
+                      <th>{dados.labels_linha[i]}</th>
+                      <td
+                        className="inad-total-cel"
+                        title={`Aquisição ${formatarMoeda(totL?.aquisicao)}`}
+                      >
+                        {formatarMoedaCurta(totL?.aquisicao)}
+                      </td>
+                      {visao.idxColunas.map((j) => {
+                        const cel = dados.celulas[i]?.[j] ?? { valor: 0, n: 0 }
+                        const { bg, fg } = corCelula(cel.valor, max)
+                        return (
+                          <td
+                            key={dados.colunas[j]}
+                            style={{ background: bg, color: fg }}
+                            title={`${dados.labels_linha[i]} × ${dados.labels_coluna[j]}: ${formatarMoeda(cel.valor)} (${cel.n} títulos)`}
+                          >
+                            {formatarMoedaCurta(cel.valor)}
+                          </td>
+                        )
+                      })}
+                      <td className="inad-total-cel">
+                        {formatarMoedaCurta(totL?.valor)}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+              <tfoot>
+                <tr>
+                  <th>Total</th>
+                  <td
+                    className="inad-total-cel inad-total-geral"
+                    title={`Aquisição ${formatarMoeda(visao.totalAquisicao)}`}
+                  >
+                    {formatarMoedaCurta(visao.totalAquisicao)}
+                  </td>
+                  {visao.totaisColuna.map((tot, k) => (
+                    <td key={dados.colunas[visao.idxColunas[k]]} className="inad-total-cel">
+                      {formatarMoedaCurta(tot.valor)}
+                    </td>
+                  ))}
+                  <td className="inad-total-cel inad-total-geral">
+                    {formatarMoedaCurta(visao.totalValor)}
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+          ) : (
+            <p className="vazio">Sem vencidos neste ano.</p>
           )}
         </section>
       )}

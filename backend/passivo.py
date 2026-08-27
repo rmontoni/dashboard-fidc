@@ -251,12 +251,70 @@ def montar_passivo(data_base: str) -> dict[str, Any]:
         except Exception:  # noqa: BLE001
             cdi_mapa = None
 
+    try:
+        from passivo_vencimentos import contagem_cotistas_por_classe
+
+        n_cotistas_mapa = contagem_cotistas_por_classe()
+    except Exception:  # noqa: BLE001
+        n_cotistas_mapa = {}
+
+    # Mez: PL = VP (paridade Alpha). SUB/conferência: valor a liquidar.
+    liq_por_carteira: dict[int, float] = {}
+    vp_por_carteira: dict[int, float] = {}
+    try:
+        from passivo_vencimentos import liquidacao_por_id_carteira, vp_por_id_carteira
+
+        liq_por_carteira = liquidacao_por_id_carteira(dt_pedida.isoformat())
+        vp_por_carteira = vp_por_id_carteira(dt_pedida.isoformat())
+    except Exception:  # noqa: BLE001
+        liq_por_carteira = {}
+        vp_por_carteira = {}
+
+    from risco import pl_motor_do_dia
+
+    motor = pl_motor_do_dia(dt)
+    if motor.get("sem_serie"):
+        # Último dia com série do motor ≤ data pedida
+        try:
+            from carteira_movimentacoes import mapa_dc_bdr_diario
+
+            serie = mapa_dc_bdr_diario()
+            cand = sorted(
+                (date.fromisoformat(k) for k in serie if k <= dt_pedida.isoformat()),
+                reverse=True,
+            )
+            for d_mot in cand[:40]:
+                m2 = pl_motor_do_dia(d_mot)
+                if not m2.get("sem_serie") and (_float(m2.get("pl")) or 0) > 0:
+                    motor = m2
+                    motor["data_ref"] = d_mot.isoformat()
+                    break
+        except Exception:  # noqa: BLE001
+            pass
+    pl_fundo = _float(motor.get("pl"))
+    aviso_pl: str | None = None
+    if pl_fundo is None or pl_fundo <= 0:
+        aviso_pl = "Sem PL do motor para esta data — conferência da SUB não usa PL IDSF."
+        pl_fundo = 0.0
+    tem_motor = not motor.get("sem_serie") and pl_fundo > 0
+    if tem_motor and motor.get("data_ref") and motor["data_ref"] != dt.isoformat():
+        aviso_pl = (
+            (aviso_pl + " " if aviso_pl else "")
+            + f"PL fundo do motor em {date.fromisoformat(motor['data_ref']).strftime('%d/%m/%Y')}."
+        ).strip() or None
+
+    passivo_mez_vp = round(sum(vp_por_carteira.values()), 2)
+    passivo_mez_liq = round(sum(liq_por_carteira.values()), 2)
+    # Identidade contábil: soma das classes = PL. Mez no quadro = VP; SUB = PL − VP mez.
+    # Valor a liquidar e VALID já entram no PL do motor (não somar de novo na SUB).
+    pl_sub_motor = round(pl_fundo - passivo_mez_vp, 2) if tem_motor else None
+
     for id_carteira, codigo, nome in CLASSES_ORDEM:
         if id_carteira not in ids_env and id_carteira not in pl_dia:
             continue
         row = dict(pl_dia.get(id_carteira) or {})
         m = meta.get(id_carteira) or {}
-        pl = _float(row.get("pl")) or 0.0
+        pl_idsf = _float(row.get("pl")) or 0.0
         qtde = _float(row.get("qtde_cotas"))
         valor_idsf = _float(row.get("valor_cota"))
         if qtde is None or qtde <= 0:
@@ -276,35 +334,44 @@ def montar_passivo(data_base: str) -> dict[str, Any]:
         valor_app: float | None = None
         aviso_marcacao: str | None = None
         dias_uteis_marcacao: int | None = None
+        n_dist = None
+        total_dist = None
 
-        if codigo.startswith("MEZ") and pct_cdi and cota_inicial and data_inicio:
-            try:
-                from carregar_passivo_movimentos import mapa_dist_por_carteira
-
-                dist = mapa_dist_por_carteira(id_carteira, data_inicio, dt)
-            except Exception:  # noqa: BLE001
-                dist = {}
-            marc = marcar_cota(
-                cota_inicial=cota_inicial,
-                data_inicio=data_inicio,
-                data_fim=dt,
-                pct_cdi=pct_cdi,
-                cdi_por_dia=cdi_mapa,
-                dist_por_dia=dist,
-            )
-            valor_app = marc.get("valor_cota")
-            aviso_marcacao = marc.get("aviso")
-            dias_uteis_marcacao = marc.get("dias_uteis")
-            n_dist = marc.get("n_distribuicoes")
-            total_dist = marc.get("total_distribuido")
-        elif qtde and qtde > 0:
-            # SUB ou sem meta: PL ÷ qtde
-            valor_app = round(pl / qtde, 8)
-            n_dist = None
-            total_dist = None
+        # PL das mez no quadro = VP motor (Alpha). SUB = fundo − a liquidar.
+        if codigo.startswith("MEZ") and id_carteira in vp_por_carteira:
+            pl = round(vp_por_carteira[id_carteira], 2)
+            if qtde and qtde > 0:
+                valor_app = round(pl / qtde, 8)
+            aviso_marcacao = "PL = VP motor passivo (Alpha)"
+        elif codigo == "SUB" and pl_sub_motor is not None:
+            pl = pl_sub_motor
+            if qtde and qtde > 0:
+                valor_app = round(pl / qtde, 8)
+            aviso_marcacao = "PL = PL fundo motor − VP mez"
         else:
-            n_dist = None
-            total_dist = None
+            pl = pl_idsf
+            if codigo.startswith("MEZ") and pct_cdi and cota_inicial and data_inicio:
+                try:
+                    from carregar_passivo_movimentos import mapa_dist_por_carteira
+
+                    dist = mapa_dist_por_carteira(id_carteira, data_inicio, dt)
+                except Exception:  # noqa: BLE001
+                    dist = {}
+                marc = marcar_cota(
+                    cota_inicial=cota_inicial,
+                    data_inicio=data_inicio,
+                    data_fim=dt,
+                    pct_cdi=pct_cdi,
+                    cdi_por_dia=cdi_mapa,
+                    dist_por_dia=dist,
+                )
+                valor_app = marc.get("valor_cota")
+                aviso_marcacao = marc.get("aviso")
+                dias_uteis_marcacao = marc.get("dias_uteis")
+                n_dist = marc.get("n_distribuicoes")
+                total_dist = marc.get("total_distribuido")
+            elif qtde and qtde > 0:
+                valor_app = round(pl / qtde, 8)
 
         cmp_ = comparar_com_idsf(valor_app, valor_idsf)
 
@@ -315,6 +382,10 @@ def montar_passivo(data_base: str) -> dict[str, Any]:
                 "nome": nome,
                 "apelido": str(row.get("apelido") or m.get("apelido") or nome),
                 "pl": round(pl, 2),
+                "pl_idsf": round(pl_idsf, 2),
+                "pl_liquidacao": round(liq_por_carteira.get(id_carteira, 0.0), 2)
+                if codigo.startswith("MEZ")
+                else None,
                 "pdd": round(_float(row.get("pdd")) or 0.0, 2),
                 "qtde_cotas": qtde,
                 "valor_cota_idsf": valor_idsf,
@@ -332,43 +403,34 @@ def montar_passivo(data_base: str) -> dict[str, Any]:
                 "ok_marcacao": cmp_.get("ok_marcacao"),
                 "vencimento": _br(venc),
                 "vencimento_iso": venc.isoformat() if venc else None,
-                "n_cotistas": None,
+                "n_cotistas": n_cotistas_mapa.get(id_carteira),
+                "fonte_pl": (
+                    "motor_passivo"
+                    if codigo.startswith("MEZ") and id_carteira in vp_por_carteira
+                    else (
+                        "motor"
+                        if codigo == "SUB" and pl_sub_motor is not None
+                        else "idsf"
+                    )
+                ),
             }
         )
 
-    from risco import pl_motor_do_dia
-
-    motor = pl_motor_do_dia(dt)
-    pl_fundo = _float(motor.get("pl"))
-    aviso_pl: str | None = None
-    if pl_fundo is None or pl_fundo <= 0:
-        aviso_pl = "Sem PL do motor para esta data — conferência da SUB não usa PL IDSF."
-        pl_fundo = 0.0
-
     passivo_mez_idsf = 0.0
-    passivo_mez_app = 0.0
     pl_sub_idsf = 0.0
     qtde_sub: float | None = None
     cota_sub_idsf: float | None = None
     for c in classes_out:
         codigo = str(c.get("classe") or "")
-        pl_c = float(c.get("pl") or 0)
-        qtde_c = _float(c.get("qtde_cotas"))
-        cota_app = _float(c.get("valor_cota_app"))
+        pl_idsf_c = float(c.get("pl_idsf") or 0)
         if codigo.startswith("MEZ"):
-            passivo_mez_idsf += pl_c
-            if qtde_c and qtde_c > 0 and cota_app:
-                passivo_mez_app += qtde_c * cota_app
-            else:
-                passivo_mez_app += pl_c
+            passivo_mez_idsf += pl_idsf_c
         elif codigo == "SUB":
-            pl_sub_idsf = pl_c
-            qtde_sub = qtde_c
+            pl_sub_idsf = pl_idsf_c
+            qtde_sub = _float(c.get("qtde_cotas"))
             cota_sub_idsf = _float(c.get("valor_cota_idsf"))
 
-    # Identidade: PL motor − PL mez = PL SUB
-    tem_motor = not motor.get("sem_serie") and pl_fundo > 0
-    pl_sub_calc = round(pl_fundo - passivo_mez_idsf, 2) if tem_motor else None
+    pl_sub_calc = pl_sub_motor
     delta_sub = (
         round(pl_sub_calc - pl_sub_idsf, 2) if pl_sub_calc is not None else None
     )
@@ -377,29 +439,26 @@ def montar_passivo(data_base: str) -> dict[str, Any]:
         if pl_sub_calc is not None and qtde_sub and qtde_sub > 0
         else None
     )
-    pl_sub_via_app = (
-        round(pl_fundo - passivo_mez_app, 2) if tem_motor else None
-    )
     conferencia_sub = {
         "pl_fundo": round(pl_fundo, 2) if tem_motor else None,
         "fonte_pl": "motor",
-        "passivo_mez": round(passivo_mez_idsf, 2),
-        "passivo_mez_app": round(passivo_mez_app, 2),
+        "passivo_mez": passivo_mez_vp,
+        "passivo_mez_vp": passivo_mez_vp,
+        "passivo_mez_liquidacao": passivo_mez_liq,
+        "passivo_mez_idsf": round(passivo_mez_idsf, 2),
+        "passivo_mez_app": passivo_mez_vp,
         "pl_sub_calc": pl_sub_calc,
         "pl_sub_idsf": round(pl_sub_idsf, 2),
         "delta": delta_sub,
         "ok": (
             delta_sub is not None and abs(delta_sub) <= TOLERANCIA_SUB_ABS
         ),
-        "pl_sub_via_app": pl_sub_via_app,
-        "delta_via_app": (
-            round(pl_sub_via_app - pl_sub_idsf, 2)
-            if pl_sub_via_app is not None
-            else None
-        ),
+        "pl_sub_via_app": pl_sub_calc,
+        "delta_via_app": delta_sub,
         "cota_sub_calc": cota_sub_calc,
         "cota_sub_idsf": cota_sub_idsf,
-        "formula": "PL motor - PL mez = PL SUB",
+        "formula": "PL motor - VP mez = PL SUB (soma das classes = PL)",
+        "passivo_aporte_valid": _float(motor.get("passivo_aporte")),
     }
 
     return {
@@ -408,7 +467,11 @@ def montar_passivo(data_base: str) -> dict[str, Any]:
         "dt_ref_pl": dt.isoformat(),
         "dt_ref_pl_br": _br(dt),
         "pl_consolidado": round(pl_fundo, 2) if tem_motor else None,
-        "subordinacao_pct": subordinacao_pct(pl_dia),
+        "subordinacao_pct": (
+            round(pl_sub_calc / pl_fundo * 100.0, 2)
+            if tem_motor and pl_sub_calc is not None and pl_fundo > 0
+            else subordinacao_pct(pl_dia)
+        ),
         "conferencia_sub": conferencia_sub,
         "classes": classes_out,
         "aviso": aviso_pl,
@@ -416,11 +479,22 @@ def montar_passivo(data_base: str) -> dict[str, Any]:
 
 
 def calcular_subordinacao_para_data(data_base: date) -> float | None:
-    """Helper para o KPI do dashboard / risco."""
+    """KPI de subordinação: PL SUB motor / PL fundo motor.
+
+    PL SUB = PL fundo − VP mez (mesma base do quadro de classes).
+    Valor a liquidar e VALID já compõem o PL do motor — não reentrar na SUB.
+    """
     try:
-        dt = _dt_ref_pl(data_base)
-        if dt is None:
-            return None
-        return subordinacao_pct(_pl_do_dia(dt))
-    except Exception:  # noqa: BLE001
+        out = montar_passivo(data_base.isoformat())
+        pct = out.get("subordinacao_pct")
+        if pct is not None:
+            return float(pct)
         return None
+    except Exception:  # noqa: BLE001
+        try:
+            dt = _dt_ref_pl(data_base)
+            if dt is None:
+                return None
+            return subordinacao_pct(_pl_do_dia(dt))
+        except Exception:  # noqa: BLE001
+            return None

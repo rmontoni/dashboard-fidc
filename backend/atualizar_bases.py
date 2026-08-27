@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import builtins
+import json
 import os
 import sys
 import threading
 import traceback
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Callable
 
 from dateutil.relativedelta import relativedelta
@@ -15,6 +17,8 @@ from dateutil.relativedelta import relativedelta
 # MEZ IV passou a aparecer na IDSF por volta desta data.
 MEZ_IV_DESDE = date(2026, 6, 23)
 MEZ_IV_ID = 34691304
+
+_STATUS_PATH = Path(__file__).resolve().parent / "data" / "atualizar_job_status.json"
 
 
 def _print_seguro(*args: Any, **kwargs: Any) -> None:
@@ -41,14 +45,60 @@ _estado: dict[str, Any] = {
 }
 
 
+def _estado_padrao() -> dict[str, Any]:
+    return {
+        "status": "idle",
+        "etapa": None,
+        "etapas": [],
+        "iniciado_em": None,
+        "terminado_em": None,
+        "erro": None,
+        "atualizacoes": None,
+    }
+
+
+def _persistir_estado_unlocked() -> None:
+    """Compartilha status entre workers do uvicorn (arquivo em data/)."""
+    try:
+        _STATUS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmp = _STATUS_PATH.with_suffix(".tmp")
+        tmp.write_text(
+            json.dumps(_estado, ensure_ascii=False, default=str),
+            encoding="utf-8",
+        )
+        tmp.replace(_STATUS_PATH)
+    except OSError:
+        pass
+
+
+def _carregar_estado_disco() -> dict[str, Any] | None:
+    try:
+        if not _STATUS_PATH.exists():
+            return None
+        raw = json.loads(_STATUS_PATH.read_text(encoding="utf-8"))
+        if isinstance(raw, dict) and raw.get("status"):
+            return raw
+    except (OSError, json.JSONDecodeError, TypeError):
+        return None
+    return None
+
+
 def status_job() -> dict[str, Any]:
     with _lock:
+        disco = _carregar_estado_disco()
+        if disco is not None:
+            # Disco é a fonte entre processos; memória local só acelera o worker do job.
+            if disco.get("status") == "running" or _estado.get("status") != "running":
+                _estado.clear()
+                _estado.update(_estado_padrao())
+                _estado.update(disco)
         return dict(_estado)
 
 
 def _set(**kwargs: Any) -> None:
     with _lock:
         _estado.update(kwargs)
+        _persistir_estado_unlocked()
 
 
 def _registrar_etapa(id_: str, label: str, status: str, detalhe: Any = None) -> None:
@@ -67,7 +117,7 @@ def _registrar_etapa(id_: str, label: str, status: str, detalhe: Any = None) -> 
             )
         _estado["etapas"] = etapas
         _estado["etapa"] = label if status == "running" else _estado.get("etapa")
-
+        _persistir_estado_unlocked()
 
 def _agora_iso() -> str:
     return (
@@ -413,8 +463,30 @@ def iniciar_atualizacao() -> dict[str, Any]:
             ),
         }
     with _lock:
-        if _estado.get("status") == "running":
-            return {"aceito": False, "motivo": "Já existe uma atualização em andamento.", **dict(_estado)}
+        atual = dict(_estado)
+        disco = _carregar_estado_disco()
+        if disco is not None:
+            atual = disco
+        if atual.get("status") == "running":
+            return {
+                "aceito": False,
+                "motivo": "Já existe uma atualização em andamento.",
+                **atual,
+            }
+        _estado.clear()
+        _estado.update(_estado_padrao())
+        _estado.update(
+            {
+                "status": "running",
+                "etapa": "Iniciando…",
+                "etapas": [],
+                "iniciado_em": _agora_iso(),
+                "terminado_em": None,
+                "erro": None,
+                "atualizacoes": None,
+            }
+        )
+        _persistir_estado_unlocked()
     thread = threading.Thread(target=rodar_atualizacao, name="atualizar-bases", daemon=True)
     thread.start()
     return {"aceito": True, **status_job()}

@@ -1,4 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
+import {
+  Area,
+  CartesianGrid,
+  ComposedChart,
+  Legend,
+  Line,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts'
 import { CalendarioDataBase } from './CalendarioDataBase'
 import type { DataBaseDetalhe } from './types'
 import { API_BASE } from './types'
@@ -34,6 +44,33 @@ type RespostaCaixa = {
   data_base_iso?: string
   matriz_caixa?: MatrizCaixa
   aviso?: string | null
+}
+
+type PontoProjecao = {
+  mes: string
+  mes_ano: string
+  entradas_ativos: number
+  entradas_brutas?: number
+  saidas_passivo: number
+  liquido: number
+  caixa: number
+  tipo?: 'real' | 'projetado' | string
+  ponto?: string
+  data?: string | null
+}
+
+type RespostaProjecao = {
+  data_ref?: string
+  ultima_liquidez?: string | null
+  caixa_inicial?: number
+  caixa_final?: number
+  serie?: PontoProjecao[]
+  totais?: {
+    entradas_ativos: number
+    entradas_brutas?: number
+    saidas_passivo: number
+    liquido: number
+  }
 }
 
 const STORAGE_DATA_BASE = 'fidc_data_base'
@@ -93,6 +130,7 @@ export default function FluxoCaixa() {
     return { ano: hoje.getFullYear(), mes: hoje.getMonth() }
   })
   const [dados, setDados] = useState<RespostaCaixa | null>(null)
+  const [projecao, setProjecao] = useState<RespostaProjecao | null>(null)
   const [erro, setErro] = useState<string | null>(null)
   const [carregando, setCarregando] = useState(false)
   const [ano, setAno] = useState(() => localStorage.getItem(STORAGE_ANO) || '')
@@ -100,6 +138,23 @@ export default function FluxoCaixa() {
   const dataSelecionada = datasDetalhe.find((d) => d.data === dataBase)
   const mapaDatas = new Map(datasDetalhe.map((d) => [d.data_iso, d]))
   const matriz = dados?.matriz_caixa
+
+  const serieProjecao = useMemo(() => {
+    return (projecao?.serie ?? []).map((p) => ({
+      mes: String(p.mes || ''),
+      mes_ano: String(p.mes_ano || p.mes || ''),
+      entradas_ativos: Number(p.entradas_ativos ?? 0),
+      saidas_passivo: Number(p.saidas_passivo ?? 0),
+      liquido: Number(p.liquido ?? 0),
+      caixa: Number(p.caixa ?? 0),
+      tipo: p.tipo === 'projetado' ? 'projetado' : 'real',
+    }))
+  }, [projecao])
+
+  const caixaInicial = Number(projecao?.caixa_inicial ?? serieProjecao[0]?.caixa ?? 0)
+  const caixaFinal = Number(
+    projecao?.caixa_final ?? serieProjecao.at(-1)?.caixa ?? 0,
+  )
 
   useEffect(() => {
     let cancelado = false
@@ -155,23 +210,35 @@ export default function FluxoCaixa() {
       setCarregando(true)
       setErro(null)
       try {
-        const res = await fetch(
-          `${API_BASE}/fidc/fluxo-caixa?dataBase=${encodeURIComponent(dataBase)}`,
-        )
-        const json = await res.json()
+        const [resMatriz, resProj] = await Promise.all([
+          fetch(
+            `${API_BASE}/fidc/fluxo-caixa?dataBase=${encodeURIComponent(dataBase)}`,
+          ),
+          fetch(
+            `${API_BASE}/fidc/passivo/fluxo-caixa?dataBase=${encodeURIComponent(dataBase)}`,
+          ),
+        ])
+        const json = await resMatriz.json()
+        const jsonProj = await resProj.json().catch(() => null)
         if (cancelado) return
-        if (!res.ok) {
+        if (!resMatriz.ok) {
           setErro(json.detail || 'Falha ao carregar fluxo de caixa.')
           setDados(null)
-          return
+        } else {
+          setDados(json)
         }
-        setDados(json)
+        if (resProj.ok && jsonProj) {
+          setProjecao(jsonProj)
+        } else {
+          setProjecao(null)
+        }
       } catch (err) {
         if (!cancelado) {
           setErro(
             err instanceof Error ? err.message : 'Falha ao carregar fluxo de caixa.',
           )
           setDados(null)
+          setProjecao(null)
         }
       } finally {
         if (!cancelado) setCarregando(false)
@@ -209,29 +276,29 @@ export default function FluxoCaixa() {
   const visao = useMemo(() => {
     if (!matriz || !ano) return null
     const idxLinhas = matriz.linhas
-      .map((mes, i) => (ano === ANO_TODOS || mes.startsWith(ano) ? i : -1))
+      .map((m, i) => (ano === ANO_TODOS || m.startsWith(ano) ? i : -1))
       .filter((i) => i >= 0)
     const inicioCol = ano === ANO_TODOS ? (matriz.colunas[0] ?? '') : `${ano}-01`
     const idxColunas = matriz.colunas
-      .map((mes, i) => (ano === ANO_TODOS || mes >= inicioCol ? i : -1))
+      .map((m, i) => (ano === ANO_TODOS || m >= inicioCol ? i : -1))
       .filter((i) => i >= 0)
 
     let max = 0
     let aquisicao = 0
     let pago = 0
     const totaisLinha = idxLinhas.map((i) => {
-      let pg = 0
-      for (const j of idxColunas) {
-        const v = matriz.celulas[i]?.[j]?.valor ?? 0
-        pg += v
-        if (v > max) max = v
-      }
       const tot = matriz.totais_linha[i]
       aquisicao += tot?.aquisicao ?? 0
-      pago += pg
+      let pagoLinha = 0
+      for (const j of idxColunas) {
+        const v = matriz.celulas[i]?.[j]?.valor ?? 0
+        pagoLinha += v
+        if (v > max) max = v
+      }
+      pago += pagoLinha
       return {
         aquisicao: tot?.aquisicao ?? 0,
-        pago: pg,
+        pago: pagoLinha,
         tir_am: tot?.tir_am ?? null,
         pct_cdi: tot?.pct_cdi ?? null,
         tir_esp_am: tot?.tir_esp_am ?? null,
@@ -242,11 +309,22 @@ export default function FluxoCaixa() {
       }
     })
     const totaisColuna = idxColunas.map((j) => {
-      let v = 0
-      for (const i of idxLinhas) v += matriz.celulas[i]?.[j]?.valor ?? 0
-      return { valor: v }
+      let valor = 0
+      for (const i of idxLinhas) {
+        valor += matriz.celulas[i]?.[j]?.valor ?? 0
+      }
+      return { valor }
     })
-    return { idxLinhas, idxColunas, totaisLinha, totaisColuna, max, aquisicao, pago }
+
+    return {
+      idxLinhas,
+      idxColunas,
+      totaisLinha,
+      totaisColuna,
+      max,
+      aquisicao,
+      pago,
+    }
   }, [matriz, ano])
 
   function selecionarAno(proximo: string) {
@@ -254,19 +332,12 @@ export default function FluxoCaixa() {
     localStorage.setItem(STORAGE_ANO, proximo)
   }
 
-  const total = matriz?.total
-
   return (
     <div className="dashboard inad-page">
       <header className="topbar">
         <div>
           <p className="eyebrow">Fluxo de caixa · consignado privado</p>
-          <h1>Aquisição × liquidações — {dataBase || '…'}</h1>
-          <p className="subtitulo">
-            Originação = vl_aquisicao · pagos nas liquidações · TIR realizada e TIR
-            esperada (VP a vencer × (1 − VNP da cessão)) · %CDI · BMP, Via Capital e
-            Cartos
-          </p>
+          <h1>Fluxo de caixa — {dataBase || '…'}</h1>
         </div>
         <div className="topbar-direita">
           <CalendarioDataBase
@@ -279,24 +350,119 @@ export default function FluxoCaixa() {
             onMesChange={(ano, mes) => setMesCalendario({ ano, mes })}
             onSelect={selecionarData}
           />
-          {total && (
-            <div className="painel-totais">
-              <div className="painel-total">
-                <span>Aquisição</span>
-                <strong>{formatarMoeda(total.aquisicao)}</strong>
-              </div>
-              <div className="painel-total">
-                <span>Total pago</span>
-                <strong>{formatarMoeda(total.pago)}</strong>
-              </div>
-            </div>
-          )}
         </div>
       </header>
 
       {erro && <p className="erro">{erro}</p>}
       {dados?.aviso && <p className="aviso">{dados.aviso}</p>}
       {carregando && <p className="vazio">Carregando matriz…</p>}
+
+      {!carregando && serieProjecao.length > 0 && (
+        <section className="painel">
+          <div className="painel-cabecalho">
+            <div>
+              <h2>Caixa projetado</h2>
+            </div>
+            <div className="painel-totais">
+              <div className="painel-total">
+                <span>Caixa + aplicações</span>
+                <strong>{formatarMoeda(caixaInicial)}</strong>
+              </div>
+              <div className="painel-total">
+                <span>Caixa final</span>
+                <strong>{formatarMoeda(caixaFinal)}</strong>
+              </div>
+              <div className="painel-total">
+                <span>Entradas (após PD)</span>
+                <strong>{formatarMoeda(projecao?.totais?.entradas_ativos)}</strong>
+              </div>
+              <div className="painel-total">
+                <span>Amortizações</span>
+                <strong>{formatarMoeda(projecao?.totais?.saidas_passivo)}</strong>
+              </div>
+            </div>
+          </div>
+          <div className="chart-wrap chart-fluxo">
+            <ComposedChart
+              key={`proj-${serieProjecao.length}-${serieProjecao[0]?.mes ?? ''}-${caixaFinal}`}
+              responsive
+              width="100%"
+              height={360}
+              data={serieProjecao}
+              margin={{ top: 12, right: 20, left: 8, bottom: 8 }}
+            >
+              <CartesianGrid strokeDasharray="3 3" stroke="#d8e0ea" />
+              <XAxis
+                dataKey="mes_ano"
+                tick={{ fill: '#5a6b7d', fontSize: 11 }}
+                interval="preserveStartEnd"
+                minTickGap={28}
+              />
+              <YAxis
+                tick={{ fill: '#5a6b7d', fontSize: 12 }}
+                tickFormatter={(v) =>
+                  Number(v).toLocaleString('pt-BR', {
+                    notation: 'compact',
+                    maximumFractionDigits: 1,
+                  })
+                }
+                width={56}
+              />
+              <Tooltip
+                formatter={(value, name) => [
+                  formatarMoeda(Number(value ?? 0)),
+                  String(name),
+                ]}
+                labelFormatter={(label, payload) => {
+                  const tipo = payload?.[0]?.payload?.tipo
+                  const sufixo =
+                    tipo === 'projetado' ? ' · projetado' : ' · real'
+                  return `${String(label)}${sufixo}`
+                }}
+                contentStyle={{
+                  background: '#0f2740',
+                  border: 'none',
+                  borderRadius: 8,
+                  color: '#fff',
+                }}
+              />
+              <Legend />
+              <Area
+                type="monotone"
+                dataKey="caixa"
+                name="Caixa acumulado"
+                stroke="#1f6f8b"
+                fill="#1f6f8b"
+                fillOpacity={0.18}
+                strokeWidth={2.5}
+                dot={{ r: 2.5, fill: '#1f6f8b' }}
+                activeDot={{ r: 5 }}
+                isAnimationActive={false}
+              />
+              <Line
+                type="monotone"
+                dataKey="entradas_ativos"
+                name="Liquidações (após PD)"
+                stroke="#2a9d8f"
+                strokeWidth={1.75}
+                strokeDasharray="5 4"
+                dot={false}
+                isAnimationActive={false}
+              />
+              <Line
+                type="monotone"
+                dataKey="saidas_passivo"
+                name="Amortizações"
+                stroke="#c45c26"
+                strokeWidth={1.75}
+                strokeDasharray="5 4"
+                dot={false}
+                isAnimationActive={false}
+              />
+            </ComposedChart>
+          </div>
+        </section>
+      )}
 
       {!carregando && anos.length > 0 && (
         <div className="inad-filtro-ano">
@@ -332,12 +498,6 @@ export default function FluxoCaixa() {
           <div className="painel-cabecalho">
             <div>
               <h2>Caixa · aquisição × liquidações</h2>
-              <p className="subtitulo">
-                TIR mensal do fluxo realizado · TIR esperada projeta a face a
-                vencer no mês de vencimento, haircut pelo VNP da originação
-                {ano !== ANO_TODOS ? ` · cessão ${ano}` : ' · todos os anos'}
-                {` · pago ${formatarMoeda(visao.pago)} / aq. ${formatarMoeda(visao.aquisicao)}`}
-              </p>
             </div>
             <div className="inad-escala" aria-hidden>
               <span>menor</span>

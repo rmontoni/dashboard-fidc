@@ -579,7 +579,7 @@ def montar_inadimplencia(data_base: str) -> dict[str, Any]:
     """Estoque vencido e VNP/vencimentos do consignado privado."""
     dt = _parse_data_base(data_base)
     sig = _assinatura_indice()
-    chave_dt = dt.isoformat()
+    chave_dt = f"{dt.isoformat()}:vnp-aq1"
     hit = _PAYLOAD_MEM.get(chave_dt)
     if hit and hit[0] == sig:
         return hit[1]
@@ -688,7 +688,14 @@ def montar_inadimplencia(data_base: str) -> dict[str, Any]:
             if valor_r > max_cel:
                 max_cel = valor_r
         grade.append(row_cells)
-        totais_linha.append({"mes": mes_orig, "valor": round(soma_l, 2), "n": n_l})
+        totais_linha.append(
+            {
+                "mes": mes_orig,
+                "valor": round(soma_l, 2),
+                "n": n_l,
+                "aquisicao": round(float(aquisicao_por.get(mes_orig, 0.0)), 2),
+            }
+        )
 
     totais_coluna = [
         {
@@ -742,6 +749,7 @@ def montar_inadimplencia(data_base: str) -> dict[str, Any]:
                 "vnp": round(soma_vnp, 2),
                 "vencimentos": round(soma_venc, 2),
                 "a_vencer": av,
+                "aquisicao": round(float(aquisicao_por.get(mes_orig, 0.0)), 2),
             }
         )
 
@@ -895,6 +903,7 @@ def montar_inadimplencia(data_base: str) -> dict[str, Any]:
                 "vnp": round(tot_vnp, 2),
                 "vencimentos": round(tot_venc, 2),
                 "a_vencer": round(tot_av, 2),
+                "aquisicao": round(sum(float(aquisicao_por.get(m, 0.0)) for m in linhas), 2),
                 "n": n_consig,
             },
             "max_pct": round(max_pct, 2),

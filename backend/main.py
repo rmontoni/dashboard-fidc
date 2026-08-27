@@ -347,6 +347,228 @@ def get_passivo(
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
+
+@app.get("/fidc/passivo/vencimentos")
+def get_passivo_vencimentos(
+    dataBase: str = Query(..., description="Data base dd/mm/yyyy ou YYYY-MM-DD"),
+):
+    """Vencimentos mezanino agregados (classe / data / cotista)."""
+    try:
+        from passivo_vencimentos import montar_vencimentos
+
+        return montar_vencimentos(dataBase)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/fidc/passivo/fluxo-caixa")
+def get_passivo_fluxo_caixa(
+    dataBase: str = Query(..., description="Data base dd/mm/yyyy ou YYYY-MM-DD"),
+):
+    """Caixa projetado: saídas de passivo + entradas de ativo (motor)."""
+    try:
+        from passivo_vencimentos import montar_fluxo_passivo_caixa
+
+        return montar_fluxo_passivo_caixa(dataBase)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/fidc/passivo/cotistas")
+def get_passivo_cotistas_lista():
+    """Lista cotistas cadastrados (passivo Alpha)."""
+    try:
+        from passivo_cadastro import listar_cotistas
+
+        return {"cotistas": listar_cotistas()}
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/fidc/passivo/cotistas/{cotista_id}")
+def get_passivo_cotista_posicao(
+    cotista_id: int,
+    dataBase: str = Query(..., description="Data base dd/mm/yyyy ou YYYY-MM-DD"),
+):
+    """Posição detalhada do cotista na data base."""
+    try:
+        from passivo_vencimentos import montar_posicao_cotista
+
+        return montar_posicao_cotista(cotista_id, dataBase)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/fidc/passivo/classes")
+def get_passivo_classes():
+    try:
+        from passivo_cadastro import listar_classes
+
+        return {"classes": listar_classes()}
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/fidc/passivo/classes")
+def post_passivo_classe(body: dict):
+    try:
+        from passivo_cadastro import criar_classe
+
+        return criar_classe(body)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.patch("/fidc/passivo/classes/{classe_id}")
+def patch_passivo_classe(classe_id: int, body: dict):
+    try:
+        from passivo_cadastro import atualizar_classe
+
+        return atualizar_classe(classe_id, body)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.delete("/fidc/passivo/classes/{classe_id}")
+def delete_passivo_classe(classe_id: int):
+    try:
+        from passivo_cadastro import excluir_classe
+
+        excluir_classe(classe_id)
+        return {"ok": True}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/fidc/passivo/cotistas")
+def post_passivo_cotista(body: dict):
+    try:
+        from passivo_cadastro import criar_cotista
+
+        return criar_cotista(body)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.patch("/fidc/passivo/cotistas/{cotista_id}")
+def patch_passivo_cotista(cotista_id: int, body: dict):
+    try:
+        from passivo_cadastro import atualizar_cotista
+
+        return atualizar_cotista(cotista_id, body)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.delete("/fidc/passivo/cotistas/{cotista_id}")
+def delete_passivo_cotista(cotista_id: int):
+    try:
+        from passivo_cadastro import excluir_cotista
+
+        excluir_cotista(cotista_id)
+        return {"ok": True}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/fidc/passivo/chamadas")
+def get_passivo_chamadas(
+    classe_id: int | None = Query(None),
+    cotista_id: int | None = Query(None),
+):
+    try:
+        from passivo_cadastro import listar_chamadas
+
+        return {"chamadas": listar_chamadas(classe_id=classe_id, cotista_id=cotista_id)}
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/fidc/passivo/chamadas")
+def post_passivo_chamada(body: dict):
+    try:
+        from passivo_cadastro import criar_chamada
+
+        return criar_chamada(body)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.patch("/fidc/passivo/chamadas/{chamada_id}")
+def patch_passivo_chamada(chamada_id: int, body: dict):
+    try:
+        from passivo_cadastro import atualizar_chamada
+
+        return atualizar_chamada(chamada_id, body)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.delete("/fidc/passivo/chamadas/{chamada_id}")
+def delete_passivo_chamada(chamada_id: int):
+    try:
+        from passivo_cadastro import excluir_chamada
+
+        excluir_chamada(chamada_id)
+        return {"ok": True}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 @app.get("/fidc/divergencias")
 def get_divergencias(
     desde: str | None = Query(None, description="YYYY-MM-DD ou dd/mm/yyyy"),

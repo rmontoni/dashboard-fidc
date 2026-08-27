@@ -43,10 +43,26 @@ type StatusAtualizacao = {
 
 const STORAGE_FUNDO = 'fidc_fundo_selecionado_id'
 const STORAGE_ATUALIZACOES_ABERTO = 'fidc_atualizacoes_aberto'
+const STORAGE_PAGINA = 'fidc_pagina'
 export const STORAGE_DATA_BASE = 'fidc_data_base'
 
+const PAGINAS: Pagina[] = [
+  'dashboard',
+  'passivo',
+  'pdd',
+  'inadimplencia',
+  'fluxo-caixa',
+  'configuracoes',
+  'divergencias',
+]
+
+function paginaInicial(): Pagina {
+  const salva = localStorage.getItem(STORAGE_PAGINA) || ''
+  return PAGINAS.includes(salva as Pagina) ? (salva as Pagina) : 'dashboard'
+}
+
 function App() {
-  const [pagina, setPagina] = useState<Pagina>('dashboard')
+  const [pagina, setPaginaState] = useState<Pagina>(paginaInicial)
   const [fundo, setFundo] = useState<Fundo | null>(null)
   const [menuAberto, setMenuAberto] = useState(true)
   const [atualizacoes, setAtualizacoes] = useState<AtualizacaoItem[]>([])
@@ -55,6 +71,11 @@ function App() {
   )
   const [atualizando, setAtualizando] = useState(false)
   const [statusAtualizacao, setStatusAtualizacao] = useState<StatusAtualizacao | null>(null)
+
+  function setPagina(proxima: Pagina) {
+    setPaginaState(proxima)
+    localStorage.setItem(STORAGE_PAGINA, proxima)
+  }
 
   function alternarAtualizacoes() {
     setAtualizacoesAberto((aberto) => {
@@ -107,6 +128,7 @@ function App() {
   useEffect(() => {
     if (!atualizando) return
     let cancelado = false
+    let idleSeguidos = 0
     const timer = window.setInterval(async () => {
       try {
         const res = await fetch(`${API_BASE}/fidc/atualizar/status`)
@@ -123,6 +145,18 @@ function App() {
           }
         } else if (dados.status === 'erro') {
           setAtualizando(false)
+        } else if (dados.status === 'idle') {
+          // Job sumiu (restart) ou status de outro worker — não fica preso.
+          idleSeguidos += 1
+          if (idleSeguidos >= 3) {
+            setAtualizando(false)
+            setStatusAtualizacao({
+              status: 'erro',
+              erro: 'Atualização interrompida ou não encontrada no servidor. Tente de novo.',
+            })
+          }
+        } else {
+          idleSeguidos = 0
         }
       } catch {
         /* ignora falhas transitórias de polling */

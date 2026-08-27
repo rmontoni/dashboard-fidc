@@ -15,9 +15,10 @@ from __future__ import annotations
 import argparse
 import calendar
 import json
+import os
 import sys
 from collections import defaultdict
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 from dateutil.relativedelta import relativedelta
@@ -36,6 +37,8 @@ TABELA = "fidc_pl_pdd_diario"
 MESES = 12
 CACHE_PATH = Path(__file__).resolve().parent / "data" / "pl_pdd_cache.json"
 SQL_PATH = Path(__file__).resolve().parent / "sql" / "fidc_pl_pdd_diario.sql"
+# PDD do fundo vive na SUB; sem ela o consolidado artificialmente zera a provisão.
+CARTEIRA_PDD = int(os.getenv("IDSF_CARTEIRA_PDD", "566391"))
 
 
 def _meses_entre(inicio: date, fim: date) -> list[tuple[date, date]]:
@@ -170,6 +173,42 @@ def carregar_cache() -> list[dict]:
     return json.loads(CACHE_PATH.read_text(encoding="utf-8"))
 
 
+def _completar_carteiras_faltantes(
+    por_dia: dict[str, dict[int, dict]],
+    carteiras: list[int],
+    token: str,
+) -> int:
+    """Reconsulta dia a dia carteiras ausentes (ex.: SUB sumiu no lote mensal)."""
+    preenchidos = 0
+    for data_pos, mapa in sorted(por_dia.items()):
+        faltam = [cid for cid in carteiras if cid not in mapa]
+        if not faltam:
+            continue
+        try:
+            d = date.fromisoformat(data_pos)
+        except ValueError:
+            continue
+        for cid in faltam:
+            rotulo = f"{cid} {data_pos} (retry)"
+            try:
+                snapshots = buscar_composicao(cid, d, d, token=token)
+                if not snapshots:
+                    print(f"  vazio  {rotulo}")
+                    continue
+                for snap in snapshots:
+                    reg = extrair_pl_pdd(snap)
+                    if not reg:
+                        continue
+                    por_dia[reg["data_posicao"]][reg["id_carteira"]] = reg
+                    preenchidos += 1
+                    print(
+                        f"  retry  {rotulo} pl={reg['pl']:,.2f} pdd={reg['pdd']:,.2f}"
+                    )
+            except Exception as exc:  # noqa: BLE001
+                print(f"  erro   {rotulo}: {exc}")
+    return preenchidos
+
+
 def coletar_da_idsf(
     n_meses: int = MESES,
     *,
@@ -217,11 +256,28 @@ def coletar_da_idsf(
                 erros.append(msg)
                 print(f"  erro   {msg}")
 
+    # Dias em que alguma carteira sumiu no lote (PDD consolidada ia a zero).
+    n_retry = _completar_carteiras_faltantes(por_dia, carteiras, token)
+    if n_retry:
+        print(f"Retries dia-a-dia: {n_retry} registros preenchidos")
+
     registros: list[dict] = []
     consolidados = 0
-    for _data_pos, mapa in sorted(por_dia.items()):
+    incompletos = 0
+    for data_pos, mapa in sorted(por_dia.items()):
         regs = list(mapa.values())
         registros.extend(regs)
+        faltam = [cid for cid in carteiras if cid not in mapa]
+        if faltam:
+            incompletos += 1
+            print(
+                f"  aviso  {data_pos}: carteiras ausentes {faltam} "
+                f"(consolidado parcial; PDD pode ficar subestimada)"
+            )
+        # Sem a SUB, não grava consolidado — evita PDD=0 artificial no VaR.
+        if CARTEIRA_PDD in carteiras and CARTEIRA_PDD not in mapa:
+            print(f"  skip   {data_pos}: consolidado omitido (sem carteira PDD {CARTEIRA_PDD})")
+            continue
         cons = consolidar_registros(regs)
         if cons:
             registros.append(cons)
@@ -229,7 +285,8 @@ def coletar_da_idsf(
 
     print(
         f"Coletado: {len(registros)} registros | dias: {len(por_dia)} | "
-        f"consolidados: {consolidados} | ok: {ok} | vazios: {vazios} | erros: {len(erros)}"
+        f"consolidados: {consolidados} | incompletos: {incompletos} | "
+        f"ok: {ok} | vazios: {vazios} | erros: {len(erros)}"
     )
     return registros
 
@@ -264,6 +321,18 @@ def carregar(
     }
 
 
+def _parse_cli_date(texto: str | None) -> date | None:
+    if not texto:
+        return None
+    t = texto.strip()
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y"):
+        try:
+            return datetime.strptime(t[:10], fmt).date()
+        except ValueError:
+            continue
+    raise argparse.ArgumentTypeError(f"Data inválida: {texto}")
+
+
 def main() -> int:
     load_dotenv()
     parser = argparse.ArgumentParser(description="Carga PL/PDD diário IDSF → Supabase")
@@ -272,9 +341,15 @@ def main() -> int:
         action="store_true",
         help="Usa backend/data/pl_pdd_cache.json sem chamar a IDSF",
     )
+    parser.add_argument("--inicio", default=None, help="YYYY-MM-DD ou dd/mm/yyyy")
+    parser.add_argument("--fim", default=None, help="YYYY-MM-DD ou dd/mm/yyyy")
     args = parser.parse_args()
     try:
-        carregar(from_cache=args.from_cache)
+        carregar(
+            from_cache=args.from_cache,
+            inicio=_parse_cli_date(args.inicio),
+            fim=_parse_cli_date(args.fim),
+        )
     except Exception as exc:  # noqa: BLE001
         print(f"Falha: {exc}", file=sys.stderr)
         return 1

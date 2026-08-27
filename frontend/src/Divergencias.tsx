@@ -75,7 +75,6 @@ function sinal(n: number) {
 
 export default function Divergencias() {
   const [dias, setDias] = useState<DiaDivergencia[]>([])
-  const [tol, setTol] = useState(500)
   const [dataSel, setDataSel] = useState('')
   const [detalhe, setDetalhe] = useState<DetalheDiv | null>(null)
   const [erro, setErro] = useState<string | null>(null)
@@ -103,7 +102,6 @@ export default function Divergencias() {
         if (cancelado) return
         const lista: DiaDivergencia[] = dados.dias ?? []
         setDias(lista)
-        setTol(Number(dados.tolerancia) || 500)
         if (lista.length > 0) {
           setDataSel((atual) => {
             if (atual && lista.some((d) => d.data_iso === atual)) return atual
@@ -168,9 +166,6 @@ export default function Divergencias() {
         <div>
           <p className="eyebrow">Controles</p>
           <h1>Divergências</h1>
-          <p className="subtitulo">
-            Motor × BDR × IDSF — apenas dias com diferença acima de {brl(tol)}
-          </p>
         </div>
         <label className="filtro-dia">
           <span>Data</span>
@@ -229,11 +224,6 @@ export default function Divergencias() {
           <section className="painel">
             <div className="painel-cabecalho">
               <h2>Totais — {detalhe.data}</h2>
-              <p className="subtitulo">
-                {detalhe.acima_tolerancia
-                  ? 'Acima da tolerância'
-                  : 'Dentro da tolerância no detalhe'}
-              </p>
             </div>
             <div className="div-tabela-wrap">
               <table className="tabela-div">
@@ -313,12 +303,6 @@ export default function Divergencias() {
             <section className="painel">
               <div className="painel-cabecalho">
                 <h2>Títulos divergentes (motor × BDR)</h2>
-                <p className="subtitulo">
-                  {detalhe.n_titulos_divergentes} com |Δ| ≥ R$ 0,01
-                  {detalhe.n_so_motor > 0 &&
-                    ` · ${detalhe.n_so_motor} só no motor`}
-                  {detalhe.n_so_bdr > 0 && ` · ${detalhe.n_so_bdr} só na BDR`}
-                </p>
               </div>
               <div className="div-tabela-wrap">
                 <table className="tabela-div tabela-titulos-div">

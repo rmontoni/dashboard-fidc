@@ -27,7 +27,10 @@ type ConferenciaSub = {
   pl_fundo: number | null
   fonte_pl?: string
   passivo_mez: number
+  passivo_mez_vp?: number
+  passivo_mez_liquidacao?: number
   passivo_mez_app?: number
+  passivo_aporte_valid?: number | null
   pl_sub_calc: number | null
   pl_sub_idsf: number
   delta: number | null
@@ -48,6 +51,70 @@ type RespostaPassivo = {
   classes: ClassePassivo[]
   aviso?: string | null
 }
+
+type VencimentosResp = {
+  data_ref: string
+  kpis: {
+    aplicado: number
+    vp: number
+    n_cotistas: number
+    n_parcelas_abertas: number
+    proximo: string | null
+    proximo_valor: number | null
+  }
+  por_classe: Array<{
+    classe_id: number
+    classe: string
+    percentual_cdi: number
+    aplicado: number
+    vp: number
+    n_cotistas: number
+    n_chamadas: number
+    n_parcelas_abertas: number
+    proximo: string | null
+  }>
+  por_data: Array<{
+    data: string
+    data_iso: string
+    status: string
+    n: number
+    aplicado: number
+    vp_hoje: number
+    valor_liquidacao: number
+  }>
+}
+
+type CotistaLista = { id: number; nome: string; documento: string }
+
+type ParcelaPos = {
+  ordem: number
+  rotulo: string
+  data_vencimento: string
+  fracao: number
+  valor_original: number
+  valor_presente: number
+  valor_na_liquidacao: number
+  liquidada: boolean
+}
+
+type ChamadaPos = {
+  chamada_id: number
+  numero: number
+  data_prazo: string
+  data_aporte: string
+  valor_nominal: number
+  valor_presente_remanescente: number
+  parcelas: ParcelaPos[]
+}
+
+type PosicaoResp = {
+  data_ref: string
+  cotista: CotistaLista
+  kpis: { aplicado: number; vp: number; n_chamadas: number }
+  por_classe: Array<{ classe: string; chamadas: ChamadaPos[] }>
+}
+
+type AbaPassivo = 'classes' | 'vencimentos' | 'cotista'
 
 function formatarMoeda(valor: number | null | undefined): string {
   return Number(valor ?? 0).toLocaleString('pt-BR', {
@@ -103,6 +170,11 @@ function Passivo({ dataBase: dataBaseProp }: PassivoProps) {
     return { ano: hoje.getFullYear(), mes: hoje.getMonth() }
   })
   const [dados, setDados] = useState<RespostaPassivo | null>(null)
+  const [vencimentos, setVencimentos] = useState<VencimentosResp | null>(null)
+  const [cotistas, setCotistas] = useState<CotistaLista[]>([])
+  const [cotistaId, setCotistaId] = useState<number | ''>('')
+  const [posicao, setPosicao] = useState<PosicaoResp | null>(null)
+  const [aba, setAba] = useState<AbaPassivo>('classes')
   const [erro, setErro] = useState<string | null>(null)
   const [carregando, setCarregando] = useState(false)
 
@@ -169,21 +241,42 @@ function Passivo({ dataBase: dataBaseProp }: PassivoProps) {
       setCarregando(true)
       setErro(null)
       try {
-        const res = await fetch(
-          `${API_BASE}/fidc/passivo?dataBase=${encodeURIComponent(dataBase)}`,
-        )
-        const json = await res.json()
+        const [resPassivo, resVenc, resCot] = await Promise.all([
+          fetch(`${API_BASE}/fidc/passivo?dataBase=${encodeURIComponent(dataBase)}`),
+          fetch(
+            `${API_BASE}/fidc/passivo/vencimentos?dataBase=${encodeURIComponent(dataBase)}`,
+          ),
+          fetch(`${API_BASE}/fidc/passivo/cotistas`),
+        ])
         if (cancelado) return
-        if (!res.ok) {
+
+        const jsonPassivo = await resPassivo.json()
+        if (!resPassivo.ok) {
           setErro(
-            typeof json.detail === 'string'
-              ? json.detail
+            typeof jsonPassivo.detail === 'string'
+              ? jsonPassivo.detail
               : 'Falha ao carregar passivo.',
           )
           setDados(null)
-          return
+        } else {
+          setDados(jsonPassivo as RespostaPassivo)
         }
-        setDados(json as RespostaPassivo)
+
+        if (resVenc.ok) {
+          setVencimentos((await resVenc.json()) as VencimentosResp)
+        } else {
+          setVencimentos(null)
+        }
+
+        if (resCot.ok) {
+          const jc = await resCot.json()
+          const lista = (jc.cotistas ?? []) as CotistaLista[]
+          setCotistas(lista)
+          setCotistaId((atual) => {
+            if (atual !== '' && lista.some((c) => c.id === atual)) return atual
+            return lista[0]?.id ?? ''
+          })
+        }
       } catch (e) {
         if (!cancelado) {
           setErro(e instanceof Error ? e.message : 'Erro de rede')
@@ -199,6 +292,34 @@ function Passivo({ dataBase: dataBaseProp }: PassivoProps) {
     }
   }, [dataBase])
 
+  useEffect(() => {
+    if (!dataBase || cotistaId === '') {
+      setPosicao(null)
+      return
+    }
+    let cancelado = false
+    async function carregarPos() {
+      try {
+        const res = await fetch(
+          `${API_BASE}/fidc/passivo/cotistas/${cotistaId}?dataBase=${encodeURIComponent(dataBase)}`,
+        )
+        const json = await res.json()
+        if (cancelado) return
+        if (!res.ok) {
+          setPosicao(null)
+          return
+        }
+        setPosicao(json as PosicaoResp)
+      } catch {
+        if (!cancelado) setPosicao(null)
+      }
+    }
+    void carregarPos()
+    return () => {
+      cancelado = true
+    }
+  }, [dataBase, cotistaId])
+
   function selecionarData(data: string) {
     setDataBase(data)
     localStorage.setItem(STORAGE_DATA_BASE, data)
@@ -213,8 +334,7 @@ function Passivo({ dataBase: dataBaseProp }: PassivoProps) {
     <div className="dashboard">
       <header className="topbar">
         <div>
-          <p className="eyebrow">Passivo · emissão de cotas</p>
-          <h1>Classes — {dataBase || '…'}</h1>
+          <h1>Passivo — {dataBase || '…'}</h1>
           {dados?.dt_ref_pl_br && dados.dt_ref_pl_br !== dataBase && (
             <p className="subtitulo">PL IDSF em {dados.dt_ref_pl_br}</p>
           )}
@@ -245,65 +365,31 @@ function Passivo({ dataBase: dataBaseProp }: PassivoProps) {
         </div>
       </header>
 
+      <nav className="abas-passivo" aria-label="Seções do passivo">
+        {(
+          [
+            ['classes', 'Classes'],
+            ['vencimentos', 'Vencimentos'],
+            ['cotista', 'Posição do cotista'],
+          ] as const
+        ).map(([id, rotulo]) => (
+          <button
+            key={id}
+            type="button"
+            className={aba === id ? 'aba ativa' : 'aba'}
+            onClick={() => setAba(id)}
+          >
+            {rotulo}
+          </button>
+        ))}
+      </nav>
+
       {!dataBase && <p className="vazio">Carregando datas disponíveis…</p>}
       {carregando && <p className="vazio">Carregando passivo…</p>}
       {erro && <div className="banner-status banner-data">{erro}</div>}
       {dados?.aviso && <p className="aviso-inline">{dados.aviso}</p>}
 
-      {!carregando && dados?.conferencia_sub && (
-        <section
-          className={`painel conferencia-sub ${dados.conferencia_sub.ok ? 'ok' : 'divergente'}`}
-        >
-          <div className="painel-cabecalho">
-            <div>
-              <h2>Conferência da subordinada</h2>
-              <p className="subtitulo">
-                PL do motor − PL das cotas mezanino = PL da subordinada
-              </p>
-            </div>
-            <div className="painel-total">
-              <span>Status</span>
-              <strong>
-                {dados.conferencia_sub.ok ? 'ok' : 'divergente'}
-              </strong>
-            </div>
-          </div>
-          <div className="conferencia-sub-grid">
-            <div className="painel-total">
-              <span>PL fundo (motor)</span>
-              <strong>{formatarMoeda(dados.conferencia_sub.pl_fundo)}</strong>
-            </div>
-            <div className="painel-total">
-              <span>Passivo mez</span>
-              <strong>{formatarMoeda(dados.conferencia_sub.passivo_mez)}</strong>
-            </div>
-            <div className="painel-total">
-              <span>PL SUB calc</span>
-              <strong>{formatarMoeda(dados.conferencia_sub.pl_sub_calc)}</strong>
-            </div>
-            <div className="painel-total">
-              <span>PL SUB IDSF</span>
-              <strong>{formatarMoeda(dados.conferencia_sub.pl_sub_idsf)}</strong>
-            </div>
-            <div className="painel-total">
-              <span>Δ SUB</span>
-              <strong>
-                {(dados.conferencia_sub.delta ?? 0) > 0 ? '+' : ''}
-                {formatarMoeda(dados.conferencia_sub.delta)}
-              </strong>
-            </div>
-          </div>
-          {dados.conferencia_sub.delta_via_app != null && (
-            <p className="subtitulo conferencia-sub-nota">
-              Com cota app das mez: PL SUB {formatarMoeda(dados.conferencia_sub.pl_sub_via_app)}{' '}
-              (Δ {(dados.conferencia_sub.delta_via_app ?? 0) > 0 ? '+' : ''}
-              {formatarMoeda(dados.conferencia_sub.delta_via_app)} vs IDSF) — residual da marcação I/II.
-            </p>
-          )}
-        </section>
-      )}
-
-      {!carregando && dados && (
+      {aba === 'classes' && !carregando && dados && (
         <section className="painel">
           <table className="tabela-passivo">
             <thead>
@@ -362,11 +448,253 @@ function Passivo({ dataBase: dataBaseProp }: PassivoProps) {
               )}
             </tbody>
           </table>
-          <p className="subtitulo passivo-nota">
-            Cota (app) nas mez = CotaInicial × fatores diários %CDI (BCB), abatendo
-            Amortização+Juros / qtde em cada data de distribuição. Δ = app − IDSF.
-            SUB usa PL ÷ quantidade.
-          </p>
+        </section>
+      )}
+
+      {aba === 'classes' && !carregando && dados?.conferencia_sub && (
+        <section
+          className={`painel conferencia-sub ${dados.conferencia_sub.ok ? 'ok' : 'divergente'}`}
+        >
+          <div className="painel-cabecalho">
+            <div>
+              <h2>Conferência da subordinada</h2>
+            </div>
+            <div className="painel-total">
+              <span>Status</span>
+              <strong>
+                {dados.conferencia_sub.ok ? 'ok' : 'divergente'}
+              </strong>
+            </div>
+          </div>
+          <div className="conferencia-sub-grid">
+            <div className="painel-total">
+              <span>PL fundo (motor)</span>
+              <strong>{formatarMoeda(dados.conferencia_sub.pl_fundo)}</strong>
+            </div>
+            <div className="painel-total">
+              <span>Passivo mez (VP)</span>
+              <strong>{formatarMoeda(dados.conferencia_sub.passivo_mez)}</strong>
+            </div>
+            <div className="painel-total">
+              <span>PL SUB calc</span>
+              <strong>{formatarMoeda(dados.conferencia_sub.pl_sub_calc)}</strong>
+            </div>
+            <div className="painel-total">
+              <span>PL SUB IDSF</span>
+              <strong>{formatarMoeda(dados.conferencia_sub.pl_sub_idsf)}</strong>
+            </div>
+            <div className="painel-total">
+              <span>Δ SUB</span>
+              <strong>
+                {(dados.conferencia_sub.delta ?? 0) > 0 ? '+' : ''}
+                {formatarMoeda(dados.conferencia_sub.delta)}
+              </strong>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {aba === 'vencimentos' && (
+        <>
+          {vencimentos?.kpis && (
+            <div className="painel-totais passivo-kpis">
+              <div className="painel-total">
+                <span>Aplicado</span>
+                <strong>{formatarMoeda(vencimentos.kpis.aplicado)}</strong>
+              </div>
+              <div className="painel-total">
+                <span>VP remanescente</span>
+                <strong>{formatarMoeda(vencimentos.kpis.vp)}</strong>
+              </div>
+              <div className="painel-total">
+                <span>Cotistas</span>
+                <strong>{vencimentos.kpis.n_cotistas}</strong>
+              </div>
+              <div className="painel-total">
+                <span>Parcelas abertas</span>
+                <strong>{vencimentos.kpis.n_parcelas_abertas}</strong>
+              </div>
+              <div className="painel-total">
+                <span>Próximo venc.</span>
+                <strong>
+                  {vencimentos.kpis.proximo ?? '—'}
+                  {vencimentos.kpis.proximo_valor != null && (
+                    <span className="muted-line">
+                      {formatarMoeda(vencimentos.kpis.proximo_valor)}
+                    </span>
+                  )}
+                </strong>
+              </div>
+            </div>
+          )}
+
+          <section className="painel">
+            <h2>Por classe</h2>
+            <div className="tabela-scroll">
+              <table className="tabela-passivo">
+                <thead>
+                  <tr>
+                    <th>Classe</th>
+                    <th>%CDI</th>
+                    <th>Aplicado</th>
+                    <th>VP</th>
+                    <th>Cotistas</th>
+                    <th>Chamadas</th>
+                    <th>Parcelas abertas</th>
+                    <th>Próximo</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(vencimentos?.por_classe ?? []).length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="vazio">
+                        Sem chamadas migradas. Rode o SQL e `migrar_passivo_alpha.py`.
+                      </td>
+                    </tr>
+                  ) : (
+                    vencimentos!.por_classe.map((c) => (
+                      <tr key={c.classe_id}>
+                        <td>{c.classe}</td>
+                        <td>{formatarPctCdi(c.percentual_cdi)}</td>
+                        <td>{formatarMoeda(c.aplicado)}</td>
+                        <td>{formatarMoeda(c.vp)}</td>
+                        <td>{c.n_cotistas}</td>
+                        <td>{c.n_chamadas}</td>
+                        <td>{c.n_parcelas_abertas}</td>
+                        <td>{c.proximo ?? '—'}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section className="painel">
+            <h2>Por data de vencimento</h2>
+            <div className="tabela-scroll">
+              <table className="tabela-passivo">
+                <thead>
+                  <tr>
+                    <th>Data</th>
+                    <th>Status</th>
+                    <th>Parcelas</th>
+                    <th>Aplicado</th>
+                    <th>VP hoje</th>
+                    <th>Valor na liquidação</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(vencimentos?.por_data ?? []).map((d) => (
+                    <tr key={d.data_iso} className={`status-parcela-${d.status}`}>
+                      <td>{d.data}</td>
+                      <td>{d.status}</td>
+                      <td>{d.n}</td>
+                      <td>{formatarMoeda(d.aplicado)}</td>
+                      <td>{formatarMoeda(d.vp_hoje)}</td>
+                      <td>{formatarMoeda(d.valor_liquidacao)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </>
+      )}
+
+      {aba === 'cotista' && (
+        <section className="painel">
+          <div className="painel-cabecalho">
+            <div>
+              <h2>Posição do cotista</h2>
+            </div>
+            <label className="select-cotista">
+              Cotista
+              <select
+                value={cotistaId === '' ? '' : String(cotistaId)}
+                onChange={(e) =>
+                  setCotistaId(e.target.value ? Number(e.target.value) : '')
+                }
+              >
+                {cotistas.length === 0 && <option value="">Sem cotistas</option>}
+                {cotistas.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.nome}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          {posicao && (
+            <>
+              <div className="painel-totais passivo-kpis">
+                <div className="painel-total">
+                  <span>Aplicado</span>
+                  <strong>{formatarMoeda(posicao.kpis.aplicado)}</strong>
+                </div>
+                <div className="painel-total">
+                  <span>VP</span>
+                  <strong>{formatarMoeda(posicao.kpis.vp)}</strong>
+                </div>
+                <div className="painel-total">
+                  <span>Chamadas</span>
+                  <strong>{posicao.kpis.n_chamadas}</strong>
+                </div>
+              </div>
+
+              {posicao.por_classe.map((bloco) => (
+                <div key={bloco.classe} className="bloco-classe-cotista">
+                  <h3>{bloco.classe}</h3>
+                  {bloco.chamadas.map((ch) => (
+                    <div key={ch.chamada_id} className="chamada-detalhe">
+                      <p className="subtitulo">
+                        Chamada #{ch.numero} · prazo {ch.data_prazo} · aporte{' '}
+                        {ch.data_aporte} · face {formatarMoeda(ch.valor_nominal)} · VP{' '}
+                        {formatarMoeda(ch.valor_presente_remanescente)}
+                      </p>
+                      <table className="tabela-passivo">
+                        <thead>
+                          <tr>
+                            <th>Parcela</th>
+                            <th>Vencimento</th>
+                            <th>Fração</th>
+                            <th>Original</th>
+                            <th>VP</th>
+                            <th>Na liquidação</th>
+                            <th>Status</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {ch.parcelas.map((p) => (
+                            <tr
+                              key={`${ch.chamada_id}-${p.ordem}`}
+                              className={
+                                p.liquidada
+                                  ? 'status-parcela-liquidado'
+                                  : 'status-parcela-aberto'
+                              }
+                            >
+                              <td>{p.rotulo}</td>
+                              <td>{p.data_vencimento}</td>
+                              <td>{(p.fracao * 100).toFixed(0)}%</td>
+                              <td>{formatarMoeda(p.valor_original)}</td>
+                              <td>{formatarMoeda(p.valor_presente)}</td>
+                              <td>{formatarMoeda(p.valor_na_liquidacao)}</td>
+                              <td>{p.liquidada ? 'liquidada' : 'aberta'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ))}
+                </div>
+              ))}
+              {posicao.por_classe.length === 0 && (
+                <p className="vazio">Este cotista não tem chamadas abertas.</p>
+              )}
+            </>
+          )}
         </section>
       )}
     </div>

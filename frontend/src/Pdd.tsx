@@ -264,9 +264,6 @@ export default function Pdd() {
         <div>
           <p className="eyebrow">PDD · carteira completa</p>
           <h1>PDD — {dataBase || '…'}</h1>
-          <p className="subtitulo">
-            Consignado por empresa/evento · demais títulos por cedente e faixa
-          </p>
         </div>
         <div className="topbar-direita">
           <CalendarioDataBase
@@ -311,9 +308,6 @@ export default function Pdd() {
             <div className="painel-cabecalho">
               <div>
                 <h2>PDD consignado privado</h2>
-                <p className="subtitulo">
-                  Afastamento · Demissão · NC/Outros · Rescisão
-                </p>
               </div>
             </div>
             <div className="pdd-tabela-scroll">
@@ -379,9 +373,6 @@ export default function Pdd() {
             <div className="painel-cabecalho">
               <div>
                 <h2>Demais títulos</h2>
-                <p className="subtitulo">
-                  Fora do consignado privado · PDD e faixa do motor
-                </p>
               </div>
               {dados.totais_outros && (
                 <div className="painel-total">
@@ -473,7 +464,6 @@ export default function Pdd() {
             <div className="painel-cabecalho">
               <div>
                 <h2>PDD histórico</h2>
-                <p className="subtitulo">Série mensal do motor (último dia do mês)</p>
               </div>
             </div>
             {historico.length === 0 ? (

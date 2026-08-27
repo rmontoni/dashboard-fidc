@@ -21,6 +21,78 @@ DOCS_CEDENTE_CONSIGNADO = frozenset(
 )
 
 PAGE = 1000
+_MAX_TENTATIVAS_CADASTRO = 4
+
+
+def _erro_transiente(exc: BaseException) -> bool:
+    msg = str(exc).lower()
+    nome = type(exc).__name__.lower()
+    return any(
+        s in msg or s in nome
+        for s in (
+            "10035",
+            "10054",
+            "10053",
+            "10060",
+            "wouldblock",
+            "temporarily unavailable",
+            "timeout",
+            "timed out",
+            "connection reset",
+            "connection aborted",
+            "server disconnected",
+            "remoteprotocolerror",
+            "connecterror",
+        )
+    )
+
+
+def _carregar_cadastro() -> dict[str, dict[str, Any]]:
+    """Mapa documento → atributos do cadastro (só PF nos cedentes filtrados)."""
+    import time
+
+    sb = get_supabase()
+    out: dict[str, dict[str, Any]] = {}
+    offset = 0
+    docs = list(DOCS_CEDENTE_CONSIGNADO)
+    cols = (
+        "documento,empresa,cnpj_empresa,tipo_evento,entrada_afastamento_rescisao,"
+        "saida_afastamento,nm_sacado,doc_sacado,doc_cedente,tp_sacado"
+    )
+    while True:
+        batch: list[dict[str, Any]] = []
+        ultimo_erro: Exception | None = None
+        for tentativa in range(1, _MAX_TENTATIVAS_CADASTRO + 1):
+            try:
+                batch = (
+                    sb.table(TABELA)
+                    .select(cols)
+                    .eq("tp_sacado", "PF")
+                    .in_("doc_cedente", docs)
+                    .range(offset, offset + PAGE - 1)
+                    .execute()
+                    .data
+                    or []
+                )
+                ultimo_erro = None
+                break
+            except Exception as exc:  # noqa: BLE001
+                ultimo_erro = exc
+                if not _erro_transiente(exc) or tentativa >= _MAX_TENTATIVAS_CADASTRO:
+                    raise
+                time.sleep(0.35 * tentativa)
+        if ultimo_erro is not None:
+            raise ultimo_erro
+        if not batch:
+            break
+        for row in batch:
+            doc = str(row.get("documento") or "").strip()
+            if doc:
+                out[doc] = row
+        if len(batch) < PAGE:
+            break
+        offset += PAGE
+    return out
 
 
 def _parse_data_base(texto: str) -> date:

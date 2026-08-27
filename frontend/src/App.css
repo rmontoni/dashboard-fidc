@@ -1078,6 +1078,26 @@ td.alerta-pct {
   color: #e09f3e;
 }
 
+/* ~10 linhas de empresa visíveis; o restante rola. */
+.consignado-tabela-scroll {
+  max-height: 28rem;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.consignado-tabela-scroll .tabela-consignado {
+  margin: 0;
+}
+
+.consignado-tabela-scroll thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--surface, #fff);
+  box-shadow: 0 1px 0 var(--line);
+}
+
 .tabela-consignado .empresa-vazia td:nth-child(2) {
   font-style: italic;
   color: #e09f3e;
@@ -1172,6 +1192,110 @@ td.alerta-pct {
 
 .passivo-nota {
   margin-top: 12px;
+}
+
+.abas-passivo {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 16px;
+}
+
+.abas-passivo .aba {
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink);
+  border-radius: 8px;
+  padding: 7px 12px;
+  font: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.abas-passivo .aba.ativa {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.config-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.config-toolbar .subtitulo {
+  margin: 0;
+}
+
+.passivo-kpis {
+  margin-bottom: 14px;
+}
+
+.tabela-scroll {
+  max-height: 360px;
+  overflow: auto;
+}
+
+.link-cotista {
+  border: none;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+  text-align: left;
+}
+
+.link-cotista:hover {
+  text-decoration: underline;
+}
+
+.select-cotista {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.85rem;
+  color: var(--muted);
+  min-width: 240px;
+}
+
+.select-cotista select,
+.form-fundo select {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: inherit;
+  color: var(--ink);
+  background: #fff;
+}
+
+.bloco-classe-cotista {
+  margin-top: 16px;
+}
+
+.bloco-classe-cotista h3 {
+  margin: 0 0 8px;
+  font-size: 1rem;
+}
+
+.chamada-detalhe {
+  margin-bottom: 14px;
+}
+
+.status-parcela-liquidado td {
+  color: var(--muted);
+}
+
+.valor-positivo {
+  color: #1a7a3c;
+}
+
+.valor-negativo {
+  color: #b42318;
 }
 
 .conferencia-sub {

@@ -244,14 +244,11 @@ function Dashboard({ fundoNome }: DashboardProps) {
       setAvisoConsignado(null)
 
       try {
-        const [res, resCons] = await Promise.all([
-          fetch(
-            `${API_BASE}/fidc/risco?dataBase=${encodeURIComponent(dataBaseFiltro)}`,
-          ),
-          fetch(
-            `${API_BASE}/fidc/consignado?dataBase=${encodeURIComponent(dataBaseFiltro)}`,
-          ),
-        ])
+        // Consignado depois do risco: evita disputa de soquete no Windows
+        // (WinError 10035) quando os dois batem no Supabase juntos.
+        const res = await fetch(
+          `${API_BASE}/fidc/risco?dataBase=${encodeURIComponent(dataBaseFiltro)}`,
+        )
         const bruto = await res.text()
         let dados: Record<string, unknown> = {}
         try {
@@ -267,20 +264,38 @@ function Dashboard({ fundoNome }: DashboardProps) {
           return
         }
 
-        if (resCons.ok) {
-          const cons = (await resCons.json()) as RespostaConsignado
-          setConsignado(cons)
-          setAvisoConsignado(cons.aviso ?? null)
-          setEmpresaConsignadoAberta(null)
-        } else {
+        const buscarConsignado = async (tentativa: number): Promise<void> => {
+          const resCons = await fetch(
+            `${API_BASE}/fidc/consignado?dataBase=${encodeURIComponent(dataBaseFiltro)}`,
+          )
+          if (resCons.ok) {
+            const cons = (await resCons.json()) as RespostaConsignado
+            setConsignado(cons)
+            setAvisoConsignado(cons.aviso ?? null)
+            setEmpresaConsignadoAberta(null)
+            return
+          }
           const consErr = await resCons.json().catch(() => ({}))
-          setConsignado(null)
-          setAvisoConsignado(
+          const detail =
             typeof consErr.detail === 'string'
               ? consErr.detail
-              : 'Consignado Privado indisponível para esta data.',
+              : 'Consignado Privado indisponível para esta data.'
+          const transiente =
+            /10035|10054|10060|timeout|timed out|socket|conexão|connection/i.test(
+              detail,
+            )
+          if (transiente && tentativa < 3) {
+            await new Promise((r) => setTimeout(r, 400 * tentativa))
+            return buscarConsignado(tentativa + 1)
+          }
+          setConsignado(null)
+          setAvisoConsignado(
+            transiente
+              ? 'Consignado temporariamente indisponível — tente atualizar a data base.'
+              : detail,
           )
         }
+        await buscarConsignado(1)
 
         if (!res.ok) {
           const detail = dados.detail ?? dados.erro ?? `HTTP ${res.status}`
@@ -377,12 +392,6 @@ function Dashboard({ fundoNome }: DashboardProps) {
     <div className="dashboard">
       <header className="topbar">
         <div>
-          <p className="eyebrow">
-            Números do motor próprio · conciliação com IDSF
-            {conciliacaoDc?.tolerancia != null && (
-              <> (tol. {formatarMoeda(conciliacaoDc.tolerancia)})</>
-            )}
-          </p>
           <h1>{fundoNome ? `Dashboard — ${fundoNome}` : 'Dashboard FIDC'}</h1>
         </div>
         <CalendarioDataBase
@@ -565,12 +574,10 @@ function Dashboard({ fundoNome }: DashboardProps) {
       <section className="grades">
         <GraficoPizza
           titulo="Distribuição por cedente"
-          subtitulo="Participação no valor presente (top 7 + outros)"
           dados={distCedentes}
         />
         <GraficoPizza
           titulo="Distribuição por sacado"
-          subtitulo="Participação no valor presente (top 7 + outros)"
           dados={distSacados}
         />
       </section>
@@ -589,7 +596,6 @@ function Dashboard({ fundoNome }: DashboardProps) {
 
       <section className="painel">
         <h2>Concentração por tipo de recebível</h2>
-        <p className="subtitulo">Participação no valor presente das operações ativas</p>
         <div className="chart-wrap chart-tipos">
           {distTipos.length === 0 ? (
             <p className="vazio">Sem dados</p>
@@ -656,10 +662,6 @@ function Dashboard({ fundoNome }: DashboardProps) {
         <div className="painel-cabecalho">
           <div>
             <h2>Aging de inadimplência</h2>
-            <p className="subtitulo">
-              Títulos com status VENCIDO por faixa de atraso (dias desde o vencimento até a data
-              base)
-            </p>
           </div>
           <div className="painel-totais">
             <div className="painel-total">
@@ -777,9 +779,6 @@ function Dashboard({ fundoNome }: DashboardProps) {
         <div className="painel-cabecalho">
           <div>
             <h2>Fluxo de caixa projetado</h2>
-            <p className="subtitulo">
-              Entradas esperadas por mês de vencimento, ajustadas pela PD de cada sacado
-            </p>
           </div>
           <div className="painel-total">
             <span>Total (após PD)</span>
@@ -835,9 +834,6 @@ function Dashboard({ fundoNome }: DashboardProps) {
 
       <section className="painel">
         <h2>Evolução da originação</h2>
-        <p className="subtitulo">
-          Volume e taxa média a.m. dos últimos 60 dias (por dia de emissão)
-        </p>
         <div className="chart-wrap chart-fluxo">
           {graficoEvolucao.length === 0 ? (
             <p className="vazio">Sem dados de originação para a data base selecionada.</p>
@@ -913,13 +909,6 @@ function Dashboard({ fundoNome }: DashboardProps) {
         <div className="painel-cabecalho">
           <div>
             <h2>Consignado Privado</h2>
-            <p className="subtitulo">
-              PF nos cedentes de consignado · VP/PDD do motor · cadastro por
-              documento (nm_cessao_bdr)
-              {consignado?.n_join != null
-                ? ` · ${consignado.n_join} títulos`
-                : ''}
-            </p>
           </div>
           {consignado && (
             <div className="painel-totais">
@@ -948,6 +937,7 @@ function Dashboard({ fundoNome }: DashboardProps) {
             Sem posição de consignado privado para esta data base.
           </p>
         ) : (
+          <div className="consignado-tabela-scroll">
           <table className="tabela-aging tabela-consignado">
             <thead>
               <tr>
@@ -1058,6 +1048,7 @@ function Dashboard({ fundoNome }: DashboardProps) {
               })}
             </tbody>
           </table>
+          </div>
         )}
       </section>
     </div>
@@ -1128,13 +1119,13 @@ function GraficoPizza({
   dados,
 }: {
   titulo: string
-  subtitulo: string
+  subtitulo?: string
   dados: FatiaDistribuicao[]
 }) {
   return (
     <div className="painel">
       <h2>{titulo}</h2>
-      <p className="subtitulo">{subtitulo}</p>
+      {subtitulo ? <p className="subtitulo">{subtitulo}</p> : null}
       <div className="chart-wrap chart-pizza">
         {dados.length === 0 ? (
           <p className="vazio">Sem dados</p>
