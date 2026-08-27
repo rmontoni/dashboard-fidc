@@ -78,7 +78,10 @@ def _agora_iso() -> str:
 
 
 def _fim_alvo() -> date:
-    return date.today()
+    """Última data operacional para baixar/atualizar: D-2 (nunca o mesmo dia)."""
+    from conciliacao import data_base_maxima
+
+    return data_base_maxima()
 
 
 def _etapa_liquidez(fim: date) -> dict[str, Any]:
@@ -228,6 +231,31 @@ def _etapa_estoque(fim: date) -> dict[str, Any]:
     }
 
 
+def _etapa_pdfs_sub(fim: date) -> dict[str, Any]:
+    """Guarda PDF da carteira SUB (IDSF 566391) até o fim operacional (D-2)."""
+    from baixar_carteiras_pdf_mensal import OUT_DIR as PDF_DIR
+    from baixar_carteiras_pdf_mensal import baixar_pdfs_periodo
+
+    existentes = sorted(PDF_DIR.glob("Carteira_566391_*.pdf"))
+    if existentes:
+        inicio = fim - relativedelta(days=21)
+        for p in existentes:
+            partes = p.stem.split("_")
+            # Carteira_566391_d_m_yyyy
+            if len(partes) >= 5:
+                try:
+                    d = date(int(partes[-1]), int(partes[-2]), int(partes[-3]))
+                    inicio = max(inicio, d + timedelta(days=1))
+                except ValueError:
+                    pass
+    else:
+        inicio = date(2026, 8, 11)
+
+    if inicio > fim:
+        return {"ok": True, "mensagem": f"PDFs SUB já completos até {fim}", "baixados": 0}
+    return baixar_pdfs_periodo(inicio, fim, forcar=False)
+
+
 def _etapa_serie() -> dict[str, Any]:
     from atualizacoes import _parse_iso, _ultima_data_liquidez
     from carteira_movimentacoes import mapa_dc_bdr_diario, reconstruir_serie_diaria
@@ -330,6 +358,7 @@ def _montar_etapas(fim: date) -> list[tuple[str, str, Callable[[], dict[str, Any
         ("bdr_mov", "BDR - Movimentações", lambda: _etapa_bdr_mov(fim)),
         ("eventos", "Cache de eventos", _etapa_eventos),
         ("estoque", "BDR - Estoque", lambda: _etapa_estoque(fim)),
+        ("pdfs_sub", "IDSF - PDFs carteira SUB", lambda: _etapa_pdfs_sub(fim)),
         ("serie", "Carteira própria (série)", _etapa_serie),
     ]
 

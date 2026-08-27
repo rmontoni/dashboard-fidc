@@ -13,6 +13,7 @@ import zipfile
 from calendar import monthrange
 from datetime import date, timedelta
 from pathlib import Path
+from typing import Any
 
 import requests
 from dotenv import load_dotenv
@@ -108,6 +109,48 @@ def salvar_fechamento(d: date, *, token: str, forcar: bool = False) -> Path | No
             print(f"  falha {cand}: {exc}", flush=True)
     print(f"ERRO {d}: {ultimo_erro}", flush=True)
     return None
+
+
+def baixar_pdfs_periodo(
+    inicio: date,
+    fim: date,
+    *,
+    forcar: bool = False,
+    token: str | None = None,
+) -> dict[str, Any]:
+    """Baixa PDFs Carteira_SUB (566391) nos dias úteis de inicio..fim."""
+    from conciliacao import dias_uteis
+
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    tok = token or token_idsf()
+    ok = 0
+    pulados = 0
+    falhas: list[dict[str, str]] = []
+    for d in dias_uteis(inicio, fim):
+        destino = OUT_DIR / nome_pdf_local(d)
+        if destino.exists() and destino.stat().st_size > 1000 and not forcar:
+            pulados += 1
+            continue
+        try:
+            raw = baixar_pdf_dia(d, token=tok)
+            pdfs = extrair_pdfs(raw)
+            if not pdfs:
+                raise RuntimeError("ZIP sem PDF")
+            preferido = nome_pdf_local(d)
+            conteudo = pdfs.get(preferido) or next(iter(pdfs.values()))
+            nome_salvo = preferido if preferido in pdfs else next(iter(pdfs))
+            path = OUT_DIR / nome_salvo
+            path.write_bytes(conteudo)
+            ok += 1
+            print(f"ok {path.name} size={path.stat().st_size}", flush=True)
+        except Exception as exc:  # noqa: BLE001
+            falhas.append({"data": d.isoformat(), "erro": str(exc)})
+            print(f"falha PDF {d}: {exc}", flush=True)
+            try:
+                tok = token_idsf()
+            except Exception:  # noqa: BLE001
+                pass
+    return {"ok": ok, "pulados": pulados, "falhas": falhas}
 
 
 def main() -> None:

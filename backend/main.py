@@ -1,10 +1,13 @@
 import os
+import time
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel, Field
 
 from conciliacao import (
+    ATRASO_DIAS_UTEIS,
     conciliar_estoque_existente,
     data_base_maxima,
     data_base_minima,
@@ -31,6 +34,7 @@ def _origens_cors() -> list[str]:
     return origens
 
 
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_origens_cors(),
@@ -42,6 +46,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Cache curto do /fidc/risco (payload ~4MB, ~20s de CPU) para evitar 502 no proxy.
+_RISCO_CACHE: dict[str, tuple[float, dict]] = {}
+_RISCO_CACHE_TTL_S = float(os.getenv("RISCO_CACHE_TTL_S", "300"))
 
 
 class FundoCreate(BaseModel):
@@ -176,7 +184,7 @@ def datas_base(
             "nota": "PL = DC(BDR) + CC Saldo + Aplicações + Provisões; conciliação = DC BDR × DC IDSF",
             "data_limite": limite.isoformat(),
             "data_limite_br": limite.strftime("%d/%m/%Y"),
-            "atraso_dias_uteis": 1,
+            "atraso_dias_uteis": ATRASO_DIAS_UTEIS,
             "fonte_carteira": "movimentacoes_bdr",
         }
     except Exception as exc:  # noqa: BLE001
@@ -382,7 +390,7 @@ def risco_fidc(
     dataBase: str = Query(..., description="Data base no formato dd/mm/yyyy"),
     fundo: str | None = Query(None, description="Código do fundo"),
 ):
-    """Risco pela carteira BDR (aq−liq) + liquidez IDSF. Até D-1."""
+    """Risco pela carteira BDR (aq−liq) + liquidez IDSF. Até D-2."""
     from datetime import datetime
 
     try:
@@ -404,7 +412,7 @@ def risco_fidc(
             status_code=400,
             detail=(
                 f"Data base {dataBase} ainda não liberada. "
-                f"Sistema disponível até D-1 ({limite.strftime('%d/%m/%Y')})."
+                f"Sistema disponível até D-2 ({limite.strftime('%d/%m/%Y')})."
             ),
         )
     from calendario import e_dia_util, e_feriado, nome_feriado
@@ -431,4 +439,17 @@ def risco_fidc(
 
     if os.getenv("VERCEL") and not CACHE_PATH.exists():
         return calcular_pl_liquidez(dataBase)
-    return calcular_risco_fidc(dataBase)
+
+    agora = time.monotonic()
+    hit = _RISCO_CACHE.get(dataBase)
+    if hit is not None and (agora - hit[0]) < _RISCO_CACHE_TTL_S:
+        return hit[1]
+
+    out = calcular_risco_fidc(dataBase)
+    if isinstance(out, dict) and not out.get("erro"):
+        _RISCO_CACHE[dataBase] = (agora, out)
+        # Evita crescimento ilimitado se o usuário navegar muitas datas.
+        if len(_RISCO_CACHE) > 64:
+            mais_antigo = min(_RISCO_CACHE.items(), key=lambda kv: kv[1][0])[0]
+            _RISCO_CACHE.pop(mais_antigo, None)
+    return out

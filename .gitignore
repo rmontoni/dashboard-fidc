@@ -10,3 +10,5 @@ dist/
 .vite/
 backend/data/
 exports/
+.vercel
+.env*
