@@ -33,6 +33,8 @@ if [[ ! -f .env ]]; then
 fi
 
 install -m 644 "$APP_DIR/deploy/vps/fidc-api.service" /etc/systemd/system/fidc-api.service
+install -m 644 "$APP_DIR/deploy/vps/fidc-atualizar.service" /etc/systemd/system/fidc-atualizar.service
+install -m 644 "$APP_DIR/deploy/vps/fidc-atualizar.timer" /etc/systemd/system/fidc-atualizar.timer
 install -m 644 "$APP_DIR/deploy/vps/nginx-fidc.conf" /etc/nginx/sites-available/fidc
 ln -sfn /etc/nginx/sites-available/fidc /etc/nginx/sites-enabled/fidc
 rm -f /etc/nginx/sites-enabled/default
@@ -43,9 +45,13 @@ ufw allow 443/tcp
 ufw --force enable || true
 
 systemctl daemon-reload
-systemctl enable fidc-api nginx
+systemctl enable fidc-api nginx fidc-atualizar.timer
 systemctl restart fidc-api
+systemctl start fidc-atualizar.timer
 systemctl reload nginx
+
+echo "Timer atualização:"
+systemctl list-timers fidc-atualizar.timer --no-pager || true
 
 curl -fsS http://127.0.0.1:8003/health || true
 curl -fsS http://127.0.0.1/health || true

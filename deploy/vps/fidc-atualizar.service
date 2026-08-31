@@ -1,0 +1,22 @@
+[Unit]
+Description=Dashboard FIDC — atualização das bases (até D-2)
+Documentation=https://github.com/rmontoni/dashboard-fidc
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/dashboard-fidc/backend
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/opt/dashboard-fidc/backend/.env
+ExecStart=/opt/dashboard-fidc/backend/.venv/bin/python atualizar_bases.py
+Nice=5
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+TimeoutStartSec=7200
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

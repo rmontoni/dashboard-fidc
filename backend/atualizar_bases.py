@@ -555,3 +555,59 @@ def iniciar_atualizacao() -> dict[str, Any]:
     thread = threading.Thread(target=rodar_atualizacao, name="atualizar-bases", daemon=True)
     thread.start()
     return {"aceito": True, **status_job()}
+
+
+def executar_atualizacao_bloqueante(*, forcar: bool = False) -> int:
+    """Roda a atualização de forma síncrona (cron / systemd). Retorna exit code."""
+    if os.getenv("VERCEL"):
+        print("Atualização não suportada no Vercel.", file=sys.stderr)
+        return 2
+    with _lock:
+        atual = dict(_estado)
+        disco = _carregar_estado_disco()
+        if disco is not None:
+            atual = disco
+        if not forcar and atual.get("status") == "running":
+            print("Atualização já em andamento — abortando.", file=sys.stderr)
+            return 2
+        _estado.clear()
+        _estado.update(_estado_padrao())
+        _estado.update(
+            {
+                "status": "running",
+                "etapa": "Iniciando…",
+                "etapas": [],
+                "iniciado_em": _agora_iso(),
+                "terminado_em": None,
+                "erro": None,
+                "atualizacoes": None,
+            }
+        )
+        _persistir_estado_unlocked()
+    print(f"Atualização iniciada — alvo D-2: {_fim_alvo().isoformat()}", file=sys.stderr)
+    rodar_atualizacao()
+    st = status_job()
+    if st.get("status") == "ok":
+        print("Atualização concluída com sucesso.", file=sys.stderr)
+        return 0
+    print(f"Atualização falhou: {st.get('erro')}", file=sys.stderr)
+    return 1
+
+
+def main() -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Atualiza todas as bases até D-2 (liquidez, IDSF, BDR, eventos, estoque, série)."
+    )
+    parser.add_argument(
+        "--forcar",
+        action="store_true",
+        help="Executa mesmo se já houver job em andamento (use com cuidado).",
+    )
+    args = parser.parse_args()
+    raise SystemExit(executar_atualizacao_bloqueante(forcar=args.forcar))
+
+
+if __name__ == "__main__":
+    main()
