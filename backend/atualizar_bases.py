@@ -1,4 +1,11 @@
-"""Orquestra a atualização de todas as bases até a última data possível."""
+"""Orquestra a atualização de todas as bases até a última data possível.
+
+Política (ver ``politica_atualizacao``):
+- Sem caixa (BDR mov/estoque/eventos): D-2.
+- IDSF (liquidez, classes, série/PL): no mínimo até a última liquidez IDSF;
+  a carga de liquidez tenta ir até D-2.
+- Série diária: não pode ficar atrás da liquidez IDSF.
+"""
 
 from __future__ import annotations
 
@@ -156,10 +163,10 @@ def _agora_iso() -> str:
 
 
 def _fim_alvo() -> date:
-    """Última data operacional para baixar/atualizar: D-2 (nunca o mesmo dia)."""
-    from conciliacao import data_base_maxima
+    """Última data operacional: D-2 (fontes sem caixa e alvo da IDSF)."""
+    from politica_atualizacao import alvo_d2
 
-    return data_base_maxima()
+    return alvo_d2()
 
 
 def _etapa_liquidez(fim: date) -> dict[str, Any]:
@@ -332,35 +339,37 @@ def _etapa_pdfs_sub(fim: date) -> dict[str, Any]:
 
 
 def _etapa_serie() -> dict[str, Any]:
-    from atualizacoes import _parse_iso, _ultima_data_liquidez
+    from atualizacoes import _parse_iso, _ultima_data_liquidez, _ultima_data_serie
     from carteira_movimentacoes import (
         DATA_MINIMA,
         mapa_dc_bdr_diario,
         reconstruir_serie_diaria,
     )
+    from politica_atualizacao import referencia_idsf
 
     serie = mapa_dc_bdr_diario()
     datas_serie = [_parse_iso(k) for k in serie]
     datas_serie = [d for d in datas_serie if d is not None]
     ultima_serie = max(datas_serie) if datas_serie else None
-    ultima_liq = _ultima_data_liquidez()
+    ultima_liq = referencia_idsf() or _ultima_data_liquidez()
+    alvo = ultima_liq
 
-    # Sem dias novos de liquidez, a série não avança (datas_alvo vêm da IDSF).
     if (
         ultima_serie is not None
-        and ultima_liq is not None
-        and ultima_serie >= ultima_liq
+        and alvo is not None
+        and ultima_serie >= alvo
         and len(serie) > 0
     ):
         return {
             "ok": True,
             "pulado": True,
             "mensagem": (
-                f"série já cobre a liquidez até {ultima_liq.isoformat()} "
+                f"série já cobre a liquidez IDSF até {alvo.isoformat()} "
                 f"({len(serie)} dias)"
             ),
             "dias": len(serie),
             "ultima": ultima_serie.isoformat(),
+            "alvo_idsf": alvo.isoformat(),
         }
 
     def progresso(fase: str, info: dict[str, float]) -> None:
@@ -378,21 +387,63 @@ def _etapa_serie() -> dict[str, Any]:
         desde = max(DATA_MINIMA, ultima_serie - timedelta(days=14))
         payload = atualizar_desde(desde, progresso=progresso)
         por_dia = (payload.get("por_dia") or {}) if isinstance(payload, dict) else {}
+        ultima_pos = _ultima_data_serie()
+        ok = ultima_pos is not None and (alvo is None or ultima_pos >= alvo)
         return {
+            "ok": ok,
             "dias": len(por_dia),
-            "ultima": max(por_dia.keys()) if por_dia else None,
+            "ultima": ultima_pos.isoformat() if ultima_pos else None,
+            "alvo_idsf": alvo.isoformat() if alvo else None,
             "pulado": False,
             "modo": "incremental",
             "desde": desde.isoformat(),
+            "mensagem": None
+            if ok
+            else (
+                f"série parou em {ultima_pos}; liquidez IDSF até {alvo}"
+                if alvo and ultima_pos
+                else "série não alcançou a liquidez IDSF"
+            ),
         }
 
     payload = reconstruir_serie_diaria(progresso=progresso)
     por_dia = (payload.get("por_dia") or {}) if isinstance(payload, dict) else {}
+    ultima_pos = _ultima_data_serie()
+    ok = ultima_pos is not None and (alvo is None or ultima_pos >= alvo)
     return {
+        "ok": ok,
         "dias": len(por_dia),
-        "ultima": max(por_dia.keys()) if por_dia else None,
+        "ultima": ultima_pos.isoformat() if ultima_pos else None,
+        "alvo_idsf": alvo.isoformat() if alvo else None,
         "pulado": False,
         "modo": "completo",
+        "mensagem": None
+        if ok
+        else (
+            f"série parou em {ultima_pos}; liquidez IDSF até {alvo}"
+            if alvo and ultima_pos
+            else "série não alcançou a liquidez IDSF"
+        ),
+    }
+
+
+def _etapa_cobertura() -> dict[str, Any]:
+    """Verifica lacunas vs política; tenta estender série se atrás da IDSF."""
+    from politica_atualizacao import verificar_cobertura
+
+    cobertura = verificar_cobertura()
+    retentativas: list[dict[str, Any]] = []
+    ids_lacuna = {x.get("id") for x in cobertura.get("lacunas") or []}
+
+    if "carteira_propria" in ids_lacuna:
+        det = _etapa_serie()
+        retentativas.append({"etapa": "serie", "detalhe": det})
+        cobertura = verificar_cobertura()
+
+    return {
+        "ok": bool(cobertura.get("ok")),
+        "cobertura": cobertura,
+        "retentativas": retentativas,
     }
 
 
@@ -455,6 +506,7 @@ def _montar_etapas(fim: date) -> list[tuple[str, str, Callable[[], dict[str, Any
         ("estoque", "BDR - Estoque", lambda: _etapa_estoque(fim)),
         ("pdfs_sub", "IDSF - PDFs carteira SUB", lambda: _etapa_pdfs_sub(fim)),
         ("serie", "Carteira própria (série)", _etapa_serie),
+        ("cobertura", "Verificação de cobertura", _etapa_cobertura),
     ]
 
 
@@ -483,11 +535,14 @@ def rodar_atualizacao() -> None:
 
         from atualizacoes import status_atualizacoes
 
+        st = status_atualizacoes()
         _set(
             status="ok",
             etapa=None,
             terminado_em=_agora_iso(),
-            atualizacoes=status_atualizacoes(),
+            atualizacoes=st,
+            cobertura_ok=st.get("cobertura_ok"),
+            lacunas=st.get("lacunas") or [],
         )
     except Exception as exc:  # noqa: BLE001
         _set(
@@ -584,10 +639,26 @@ def executar_atualizacao_bloqueante(*, forcar: bool = False) -> int:
             }
         )
         _persistir_estado_unlocked()
-    print(f"Atualização iniciada — alvo D-2: {_fim_alvo().isoformat()}", file=sys.stderr)
+    print(
+        f"Atualização iniciada — alvo D-2: {_fim_alvo().isoformat()}",
+        file=sys.stderr,
+    )
     rodar_atualizacao()
     st = status_job()
     if st.get("status") == "ok":
+        lacunas = st.get("lacunas") or []
+        if lacunas:
+            print(
+                f"Atualização concluída com {len(lacunas)} lacuna(s) de cobertura:",
+                file=sys.stderr,
+            )
+            for lac in lacunas:
+                print(
+                    f"  - {lac.get('label')}: {lac.get('atual')} "
+                    f"(alvo {lac.get('alvo')}, política {lac.get('politica')})",
+                    file=sys.stderr,
+                )
+            return 1
         print("Atualização concluída com sucesso.", file=sys.stderr)
         return 0
     print(f"Atualização falhou: {st.get('erro')}", file=sys.stderr)
@@ -598,7 +669,10 @@ def main() -> None:
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Atualiza todas as bases até D-2 (liquidez, IDSF, BDR, eventos, estoque, série)."
+        description=(
+            "Atualiza todas as bases: sem caixa até D-2; IDSF/série até a "
+            "última liquidez IDSF (carga tenta D-2)."
+        )
     )
     parser.add_argument(
         "--forcar",

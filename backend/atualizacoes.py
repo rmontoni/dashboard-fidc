@@ -116,48 +116,45 @@ def _ultima_data_estoque_bdr() -> date | None:
     return max(datas) if datas else None
 
 
-def _ultima_data_carteira_propria() -> date | None:
-    """Última data em que o motor consegue montar a carteira.
-
-    Considera série diária, export EstoqueMotor_*.csv e último evento BDR
-    (movimentações), pois a série pode atrasar quando a IDSF não tem liquidez.
-    """
+def _ultima_data_serie() -> date | None:
+    """Última data na série diária do motor (carteira_mov_diario.json)."""
+    if not DIARIO_PATH.exists():
+        return None
+    try:
+        raw = json.loads(DIARIO_PATH.read_text(encoding="utf-8"))
+        por_dia = raw.get("por_dia") or {}
+    except (OSError, json.JSONDecodeError, TypeError):
+        return None
     datas: list[date] = []
-    if DIARIO_PATH.exists():
-        try:
-            raw = json.loads(DIARIO_PATH.read_text(encoding="utf-8"))
-            por_dia = raw.get("por_dia") or {}
-            for k in por_dia:
-                d = _parse_iso(k)
-                if d is not None:
-                    datas.append(d)
-        except (OSError, json.JSONDecodeError, TypeError):
-            pass
-    for path in RELATORIOS_DIR.glob("EstoqueMotor_*.csv"):
-        d = _parse_iso(path.stem.replace("EstoqueMotor_", ""))
+    for k in por_dia:
+        d = _parse_iso(k)
         if d is not None:
             datas.append(d)
-    ev = _ultima_data_eventos()
-    if ev is not None:
-        datas.append(ev)
     return max(datas) if datas else None
 
 
+def _ultima_data_carteira_propria() -> date | None:
+    """Alias da série diária (PL motor usa este arquivo + liquidez)."""
+    return _ultima_data_serie()
+
+
 def status_atualizacoes() -> dict[str, Any]:
+    from politica_atualizacao import item_atualizacao, verificar_cobertura
+
     out: list[dict[str, Any]] = []
-    for id_, label, data in (
-        ("idsf", "IDSF", _ultima_data_liquidez()),
-        ("idsf_classes", "IDSF - Classes", _ultima_data_classes()),
-        ("bdr_movimentacoes", "BDR - Movimentações", _ultima_data_eventos()),
-        ("bdr_estoque", "BDR - Estoque", _ultima_data_estoque_bdr()),
-        ("carteira_propria", "Carteira Própria", _ultima_data_carteira_propria()),
+    for id_, label, fn in (
+        ("idsf", "IDSF - Liquidez", _ultima_data_liquidez),
+        ("idsf_classes", "IDSF - Classes", _ultima_data_classes),
+        ("bdr_movimentacoes", "BDR - Movimentações", _ultima_data_eventos),
+        ("bdr_estoque", "BDR - Estoque", _ultima_data_estoque_bdr),
+        ("carteira_propria", "Carteira Própria (série)", _ultima_data_serie),
     ):
-        out.append(
-            {
-                "id": id_,
-                "label": label,
-                "data": _br(data),
-                "data_iso": data.isoformat() if data else None,
-            }
-        )
-    return {"itens": out}
+        out.append(item_atualizacao(id_, label, fn()))
+    cobertura = verificar_cobertura()
+    return {
+        "itens": out,
+        "alvo_d2": cobertura.get("alvo_d2"),
+        "referencia_idsf": cobertura.get("referencia_idsf"),
+        "cobertura_ok": cobertura.get("ok"),
+        "lacunas": cobertura.get("lacunas") or [],
+    }

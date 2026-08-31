@@ -26,6 +26,10 @@ type AtualizacaoItem = {
   label: string
   data: string | null
   data_iso: string | null
+  alvo?: string | null
+  alvo_iso?: string | null
+  politica?: 'd2' | 'idsf' | string
+  atualizado?: boolean
 }
 
 type EtapaAtualizacao = {
@@ -326,7 +330,17 @@ function App() {
               {atualizacoesAberto && (
                 <ul>
                   {atualizacoes.map((item) => (
-                    <li key={item.id}>
+                    <li
+                      key={item.id}
+                      className={
+                        item.atualizado === false ? 'sidebar-atualizacao-pendente' : undefined
+                      }
+                      title={
+                        item.atualizado === false && item.alvo
+                          ? `Alvo: ${item.alvo} (${item.politica === 'd2' ? 'D-2' : 'IDSF'})`
+                          : undefined
+                      }
+                    >
                       <span>{item.label}</span>
                       <strong>{item.data ?? '—'}</strong>
                     </li>

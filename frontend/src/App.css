@@ -231,6 +231,14 @@ body {
   white-space: nowrap;
 }
 
+.sidebar-atualizacao-pendente strong {
+  color: #ffb347;
+}
+
+.sidebar-atualizacao-pendente span {
+  color: #e8c4a0;
+}
+
 .sidebar-fundo {
   margin-top: 0;
   padding: 12px;

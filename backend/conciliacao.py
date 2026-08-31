@@ -3,6 +3,8 @@
 Datas disponíveis = calendário desde o início do fundo (dias úteis),
 limitado a D-2 (dois dias úteis antes de hoje) — BDR/IDSF ainda
 consolida o estoque com atraso; não baixar nem liberar o mesmo dia.
+Cobertura das bases: ver ``politica_atualizacao`` (sem caixa → D-2;
+IDSF/série → última liquidez IDSF).
 O motor de risco só roda em datas com status `ok` (estoque de direitos
 creditórios conferido). Caixa/outras aplicações (IDSF) entram depois no PL.
 """
