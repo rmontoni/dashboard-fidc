@@ -2,8 +2,8 @@
 Description=Agenda atualização diária das bases FIDC (dias úteis, manhã)
 
 [Timer]
-# 07:30 America/Sao_Paulo — após consolidação BDR/IDSF do dia anterior (D-2).
-OnCalendar=Mon..Fri *-*-* 07:30:00 America/Sao_Paulo
+# 07:00 America/Sao_Paulo (GMT-3) — dias úteis, após consolidação BDR/IDSF (D-2).
+OnCalendar=Mon..Fri *-*-* 07:00:00 America/Sao_Paulo
 Persistent=true
 RandomizedDelaySec=180
 
