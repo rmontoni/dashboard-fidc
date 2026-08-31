@@ -46,8 +46,8 @@ def _match_sacado(pos: dict[str, Any], alvo: str) -> bool:
     return nome == alvo_u or (doc and doc == alvo_doc)
 
 
-def listar_sacados(data_base: str) -> dict[str, Any]:
-    """Sacados com posição aberta na data base (motor)."""
+def _listar_sacados_live(data_base: str) -> dict[str, Any]:
+    """Sacados com posição aberta na data base (recalcula pelo motor)."""
     from carteira_movimentacoes import carregar_carteira_movimentacoes
 
     ref = _parse_data_base(data_base)
@@ -95,6 +95,17 @@ def listar_sacados(data_base: str) -> dict[str, Any]:
         "data_ref_iso": ref.isoformat(),
         "sacados": sacados,
     }
+
+
+def listar_sacados(data_base: str) -> dict[str, Any]:
+    """Sacados com posição aberta na data base (cache ou motor)."""
+    from extrato_sacado_cache import sacados_do_cache
+
+    em_cache = sacados_do_cache(data_base)
+    if em_cache is not None:
+        return em_cache
+
+    return _listar_sacados_live(data_base)
 
 
 def _vp_posicao(
@@ -197,6 +208,62 @@ def _primeira_data_sacado(eventos: list[dict[str, Any]], alvo: str) -> date | No
     return None
 
 
+def _match_sacado_evento(
+    ev: dict[str, Any],
+    sacado: str,
+    estado_ref: dict[str, dict[str, Any]],
+) -> bool:
+    if _match_sacado(ev, sacado):
+        return True
+    chave = str(ev.get("chave") or "")
+    pos = estado_ref.get(chave)
+    return bool(pos and _match_sacado(pos, sacado))
+
+
+def _movimentos_dia_sacado(
+    eventos: list[dict[str, Any]],
+    inicio: int,
+    fim: int,
+    sacado: str,
+    estado_ref: dict[str, dict[str, Any]],
+) -> tuple[float, float]:
+    """Valor de aquisição (compra) e valor pago (liquidações) do sacado no dia."""
+    aquisicao = liquidacao = 0.0
+    for ev in eventos[inicio:fim]:
+        tipo = str(ev.get("tipo") or "").lower()
+        if tipo == "aquisicao":
+            if _match_sacado(ev, sacado):
+                compra = float(ev.get("valor_descontado") or 0)
+                aquisicao += compra if compra > 0 else float(ev.get("valor_face") or 0)
+        elif tipo == "liquidacao":
+            if _match_sacado_evento(ev, sacado, estado_ref):
+                liquidacao += float(ev.get("valor_pago") or 0)
+    return round(aquisicao, 2), round(liquidacao, 2)
+
+
+def _juros_dia_sacado(
+    estado_inicio: dict[str, dict[str, Any]],
+    sacado: str,
+    d: date,
+    d_prev: date | None,
+    *,
+    acumular: bool,
+) -> float:
+    """Juros contratuais do dia (VP D − VP D−1) sobre a carteira do sacado."""
+    if d_prev is None:
+        return 0.0
+    subset = _filtrar_sacado(estado_inicio, sacado)
+    if not subset:
+        return 0.0
+    vp_d = _totais_sacado_marcado(
+        _marcar_subset_sacado(subset, d, acumular=acumular)
+    )["vp"]
+    vp_prev = _totais_sacado_marcado(
+        _marcar_subset_sacado(subset, d_prev, acumular=acumular)
+    )["vp"]
+    return round(vp_d - vp_prev, 2)
+
+
 def montar_extrato_sacado(
     sacado: str,
     data_base: str,
@@ -213,6 +280,21 @@ def montar_extrato_sacado(
     if not sacado.strip():
         raise ValueError("Sacado não informado")
 
+    from extrato_sacado_cache import extrato_do_cache
+
+    em_cache = extrato_do_cache(sacado, data_base, modo=modo)
+    if em_cache is not None:
+        return em_cache
+
+    return _montar_extrato_sacado_live(sacado, data_base, modo=modo)
+
+
+def _montar_extrato_sacado_live(
+    sacado: str,
+    data_base: str,
+    *,
+    modo: str = "motor",
+) -> dict[str, Any]:
     acumular = modo in ("juros_pos_venc", "juros-pos-venc", "2")
     fim = _parse_data_base(data_base)
 
@@ -232,6 +314,7 @@ def montar_extrato_sacado(
     estado = carregar_estoque_base()
     ev_idx = 0
     serie: list[dict[str, Any]] = []
+    d_prev_util: date | None = None
 
     d = inicio
     while d <= fim:
@@ -239,9 +322,18 @@ def montar_extrato_sacado(
             d += timedelta(days=1)
             continue
         d_iso = d.isoformat()
+        estado_inicio = {k: dict(v) for k, v in estado.items()}
         inicio_ev = ev_idx
         while ev_idx < len(eventos) and str(eventos[ev_idx].get("data") or "") <= d_iso:
             ev_idx += 1
+
+        aquisicao, liquidacao = _movimentos_dia_sacado(
+            eventos, inicio_ev, ev_idx, sacado, estado_inicio
+        )
+        juros = _juros_dia_sacado(
+            estado_inicio, sacado, d, d_prev_util, acumular=acumular
+        )
+
         if ev_idx > inicio_ev:
             estado = _aplicar_eventos_ate(eventos[inicio_ev:ev_idx], d, base=estado)
         _aplicar_repactuacoes(estado, d)
@@ -254,12 +346,29 @@ def montar_extrato_sacado(
                 {
                     "data": d_iso,
                     "label": _label_dia(d, fim),
-                    **tot,
+                    "aquisicao": aquisicao,
+                    "face": tot["face"],
+                    "juros": juros,
+                    "liquidacao": liquidacao,
+                    "vp": tot["vp"],
+                    "pdd": tot["pdd"],
                 }
             )
+        d_prev_util = d
         d += timedelta(days=1)
 
-    ultimo = serie[-1] if serie else {"face": 0.0, "vp": 0.0, "pdd": 0.0, "n_titulos": 0}
+    ultimo = (
+        serie[-1]
+        if serie
+        else {
+            "face": 0.0,
+            "vp": 0.0,
+            "pdd": 0.0,
+            "aquisicao": 0.0,
+            "juros": 0.0,
+            "liquidacao": 0.0,
+        }
+    )
     return {
         "data_ref": _br(fim),
         "data_ref_iso": fim.isoformat(),
@@ -277,6 +386,8 @@ def montar_extrato_sacado(
             "face": ultimo["face"],
             "vp": ultimo["vp"],
             "pdd": ultimo["pdd"],
-            "n_titulos": ultimo["n_titulos"],
+            "aquisicao": ultimo.get("aquisicao", 0.0),
+            "juros": ultimo.get("juros", 0.0),
+            "liquidacao": ultimo.get("liquidacao", 0.0),
         },
     }

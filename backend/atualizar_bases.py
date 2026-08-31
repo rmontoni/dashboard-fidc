@@ -427,6 +427,37 @@ def _etapa_serie() -> dict[str, Any]:
     }
 
 
+def _etapa_extrato_sacado() -> dict[str, Any]:
+    """Pré-calcula extratos sacado (motor + juros pós-venc) até a última data da série."""
+    from atualizacoes import _ultima_data_serie
+    from extrato_sacado_cache import cache_atualizado, reconstruir_cache
+
+    data_ref = _ultima_data_serie()
+    if data_ref is None:
+        return {
+            "ok": False,
+            "erro": "Série diária ausente — rode a etapa Carteira própria antes.",
+        }
+
+    if cache_atualizado(data_ref):
+        return {
+            "ok": True,
+            "pulado": True,
+            "data_ref": data_ref.isoformat(),
+            "mensagem": f"cache de extrato sacado já cobre {data_ref.isoformat()}",
+        }
+
+    def progresso(sacado: str, atual: int, total: int) -> None:
+        _registrar_etapa(
+            "extrato_sacado",
+            "Extrato sacado (cache)",
+            "running",
+            {"sacado": sacado, "atual": atual, "total": total},
+        )
+
+    return reconstruir_cache(data_ref, progresso=progresso)
+
+
 def _etapa_cobertura() -> dict[str, Any]:
     """Verifica lacunas vs política; tenta estender série se atrás da IDSF."""
     from politica_atualizacao import verificar_cobertura
@@ -507,6 +538,7 @@ def _montar_etapas(fim: date) -> list[tuple[str, str, Callable[[], dict[str, Any
         ("pdfs_sub", "IDSF - PDFs carteira SUB", lambda: _etapa_pdfs_sub(fim)),
         ("serie", "Carteira própria (série)", _etapa_serie),
         ("cobertura", "Verificação de cobertura", _etapa_cobertura),
+        ("extrato_sacado", "Extrato sacado (cache)", _etapa_extrato_sacado),
     ]
 
 
