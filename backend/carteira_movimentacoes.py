@@ -134,10 +134,13 @@ def _evento_aquisicao(dados: dict[str, Any], data_ev: date) -> dict[str, Any] | 
     chave = _norm_key(
         dados.get("SEU NUMERO"),
         dados.get("NUMERO DOCUMENTO"),
+        dados.get("NM_CESSAO_BDR"),
+        dados.get("NM_CESSAO"),
         dados.get("ID RECEBIVEL"),
     )
     if not chave:
         return None
+    nm_bdr = _norm_key(dados.get("NM_CESSAO_BDR"), dados.get("NM_CESSAO"))
     face = _parse_valor(dados.get("VALOR DE VENCIMENTO"))
     compra = _parse_valor(dados.get("VALOR DE COMPRA"))
     venc = _parse_data_campo(dados.get("DATA VENCIMENTO"))
@@ -148,6 +151,7 @@ def _evento_aquisicao(dados: dict[str, Any], data_ev: date) -> dict[str, Any] | 
         "data": data_ev.isoformat(),
         "chave": chave,
         "documento": _norm_key(dados.get("NUMERO DOCUMENTO"), chave),
+        "nm_cessao_bdr": nm_bdr or chave,
         "cedente": str(dados.get("CEDENTE") or "").strip(),
         "sacado": str(dados.get("NOME SACADO") or dados.get("SACADO") or "").strip(),
         "doc_sacado": str(
@@ -172,6 +176,8 @@ def _evento_liquidacao(dados: dict[str, Any], data_ev: date) -> dict[str, Any] |
     chave = _norm_key(
         dados.get("SEU NUMERO"),
         dados.get("DOCUMENTO"),
+        dados.get("NM_CESSAO_BDR"),
+        dados.get("NM_CESSAO"),
         dados.get("ID_RECEBIVEL"),
         dados.get("ID RECEBIVEL"),
     )
@@ -184,6 +190,7 @@ def _evento_liquidacao(dados: dict[str, Any], data_ev: date) -> dict[str, Any] |
         "tipo": "liquidacao",
         "data": data_ev.isoformat(),
         "chave": chave,
+        "nm_cessao_bdr": _norm_key(dados.get("NM_CESSAO_BDR"), dados.get("NM_CESSAO"), chave),
         "ocorrencia": oc,
         "parcial": parcial,
         "valor_pago": round(_parse_valor(dados.get("VALOR DE PAGO")), 8),
@@ -723,6 +730,7 @@ def _aplicar_eventos_ate(
                 )
                 abertos[chave] = {
                     "documento": ev.get("documento") or chave,
+                    "nm_cessao_bdr": ev.get("nm_cessao_bdr") or ev.get("documento") or chave,
                     "cedente": ev.get("cedente") or "",
                     "sacado": ev.get("sacado") or "",
                     "doc_sacado": str(ev.get("doc_sacado") or "").strip(),

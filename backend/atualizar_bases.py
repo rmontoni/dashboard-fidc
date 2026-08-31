@@ -222,13 +222,10 @@ def _etapa_bdr_mov(fim: date) -> dict[str, Any]:
 
 
 def _etapa_eventos() -> dict[str, Any]:
-    from atualizacoes import _ultima_data_eventos
-    from atualizar_eventos_desde import atualizar_eventos
+    from carteira_movimentacoes import reconstruir_eventos
 
-    ultima = _ultima_data_eventos()
-    # Reprocessa uma semana de overlap para capturar atrasos de upsert.
-    desde = (ultima - timedelta(days=7)) if ultima else date.today() - relativedelta(months=1)
-    meta = atualizar_eventos(desde)
+    # Rebuild completo após movimentações BDR — evita cache defasado (D-2 / upsert tardio).
+    meta = reconstruir_eventos(forcar=True)
     try:
         from aquisicoes_volume import reconstruir_cache
 

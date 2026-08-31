@@ -87,13 +87,29 @@ def calcular_efeito_residuos(
         return vazio
 
     df = pd.read_csv(bdr_path, sep=";", dtype=str, encoding="utf-8-sig")
-    if "SEU_NUMERO" not in df.columns:
+    cols = {str(c).upper(): c for c in df.columns}
+
+    def _col(*names: str) -> str | None:
+        for n in names:
+            c = cols.get(n.upper())
+            if c is not None:
+                return c
+        return None
+
+    doc_c = _col("SEU_NUMERO", "NM_CESSAO", "NM_CESSAO_BDR", "NU_DOCUMENTO")
+    if not doc_c:
         return vazio
 
-    df["doc"] = df["SEU_NUMERO"].astype(str).str.strip()
-    df["VP"] = [_cent(_parse_valor(x)) for x in df["VALOR_PRESENTE"]]
-    df["PDD"] = [_cent(_parse_valor(x)) for x in df["VALOR_PDD"]]
-    df["FAIXA"] = df["FAIXA_PDD"].astype(str).str.strip().str.upper()
+    df["doc"] = df[doc_c].astype(str).str.strip()
+    vp_c = _col("VL_PRESENTE_ADM", "VL_PRESENTE_BDR", "VALOR_PRESENTE")
+    pdd_c = _col("VL_PDD", "VALOR_PDD")
+    fx_c = _col("FX_PDD", "FAIXA_PDD")
+    if not vp_c or not pdd_c or not fx_c:
+        return vazio
+
+    df["VP"] = [_cent(_parse_valor(x)) for x in df[vp_c]]
+    df["PDD"] = [_cent(_parse_valor(x)) for x in df[pdd_c]]
+    df["FAIXA"] = df[fx_c].astype(str).str.strip().str.upper()
     df["DOC_SAC"] = (
         df["DOC_SACADO"].astype(str).str.strip()
         if "DOC_SACADO" in df.columns
@@ -112,8 +128,12 @@ def calcular_efeito_residuos(
         for k, pos in abertos_motor.items():
             motor_docs.add(str(k).strip())
             motor_docs.add(str(pos.get("documento") or "").strip())
+            motor_docs.add(str(pos.get("nm_cessao_bdr") or "").strip())
 
-    mask_cand = df["doc"].isin(docs_ignorar)
+    # Resíduos BDR: VP≤0 (artefato registrador). Motor remove face zerada — não conciliar.
+    mask_cand = df["VP"] <= 0.005
+    if docs_ignorar:
+        mask_cand = mask_cand | df["doc"].isin(docs_ignorar)
     candidatos = df[mask_cand]
     if candidatos.empty:
         return vazio

@@ -119,7 +119,9 @@ def idsf_do_dia(d: date) -> dict[str, Any]:
 
 
 def totais_bdr(path: Path) -> dict[str, float | int]:
-    df = pd.read_csv(path, sep=";", dtype=str, encoding="utf-8-sig")
+    df = _normalizar_colunas_bdr(
+        pd.read_csv(path, sep=";", dtype=str, encoding="utf-8-sig")
+    )
     cols = {str(c).upper(): c for c in df.columns}
 
     def _col(*names: str):
@@ -129,13 +131,28 @@ def totais_bdr(path: Path) -> dict[str, float | int]:
                 return df[c]
         raise KeyError(f"Coluna não encontrada: {names}")
 
-    vp = sum(
-        cent(parse_valor(x))
-        for x in _col("vl_presente_adm", "vl_presente_bdr", "VALOR_PRESENTE")
-    )
-    pdd = sum(cent(parse_valor(x)) for x in _col("vl_pdd", "VALOR_PDD"))
-    face = sum(cent(parse_valor(x)) for x in _col("vl_face", "VALOR_NOMINAL"))
-    return {"n": len(df), "vp": cent(vp), "pdd": cent(pdd), "face": cent(face)}
+    vp_serie = [cent(parse_valor(x)) for x in _col("vl_presente_adm", "vl_presente_bdr", "VALOR_PRESENTE")]
+    pdd_serie = [cent(parse_valor(x)) for x in _col("vl_pdd", "VALOR_PDD")]
+    face_serie = [cent(parse_valor(x)) for x in _col("vl_face", "VALOR_NOMINAL")]
+
+    residuos = sum(1 for v in vp_serie if v <= 0.005)
+    vp_res = cent(sum(v for v in vp_serie if v <= 0.005))
+    pdd_res = cent(sum(p for v, p in zip(vp_serie, pdd_serie, strict=False) if v <= 0.005))
+
+    vp = cent(sum(v for v in vp_serie if v > 0.005))
+    pdd = cent(sum(p for v, p in zip(vp_serie, pdd_serie, strict=False) if v > 0.005))
+    face = cent(sum(face_serie))
+    n_pos = sum(1 for v in vp_serie if v > 0.005)
+    return {
+        "n": n_pos,
+        "n_bruto": len(df),
+        "n_residuos_vp": residuos,
+        "vp_residuos": vp_res,
+        "pdd_residuos": pdd_res,
+        "vp": vp,
+        "pdd": pdd,
+        "face": face,
+    }
 
 
 def _normalizar_colunas_bdr(df: pd.DataFrame) -> pd.DataFrame:
@@ -186,6 +203,9 @@ def df_sistema(abertos: dict[str, dict[str, Any]], data_ref: date) -> pd.DataFra
             {
                 "chave": chave,
                 "documento": str(pos.get("documento") or chave).strip(),
+                "nm_cessao_bdr": str(
+                    pos.get("nm_cessao_bdr") or pos.get("documento") or chave
+                ).strip(),
                 "sacado": pos.get("sacado") or "",
                 "doc_sacado": str(pos.get("doc_sacado") or "").strip(),
                 "status": status,
@@ -197,6 +217,26 @@ def df_sistema(abertos: dict[str, dict[str, Any]], data_ref: date) -> pd.DataFra
             }
         )
     return pd.DataFrame(rows)
+
+
+def _index_bdr_por_doc(bdr: pd.DataFrame) -> dict[str, int]:
+    """Índice doc → linha BDR (nm_cessao, nm_cessao_bdr, seu_numero)."""
+    idx: dict[str, int] = {}
+    cols = {str(c).upper(): c for c in bdr.columns}
+    candidatos = []
+    for nome in ("NM_CESSAO_BDR", "NM_CESSAO", "SEU_NUMERO", "NU_DOCUMENTO"):
+        c = cols.get(nome)
+        if c is not None:
+            candidatos.append(c)
+    for i, row in bdr.iterrows():
+        for c in candidatos:
+            val = str(row.get(c) or "").strip()
+            if val and val.lower() not in {"nan", "none"}:
+                idx.setdefault(val, int(i))
+        doc = str(row.get("doc") or "").strip()
+        if doc:
+            idx.setdefault(doc, int(i))
+    return idx
 
 
 def detalhar_vs_bdr(
@@ -214,28 +254,63 @@ def detalhar_vs_bdr(
     bdr["PDD_BDR"] = [cent(parse_valor(x)) for x in bdr["VALOR_PDD"]]
     bdr["FAIXA_BDR"] = bdr["FAIXA_PDD"].astype(str).str.strip().str.upper()
     bdr["FACE_BDR"] = [cent(parse_valor(x)) for x in bdr["VALOR_NOMINAL"]]
+    # Exclui resíduos VP≤0 da conciliação (artefato BDR; motor correto).
+    mask_pos = bdr["VP_BDR"].astype(float) > 0.005
+    bdr_pos = bdr[mask_pos].copy()
+    bdr_res = bdr[~mask_pos].copy()
 
-    sis["doc"] = sis["documento"].astype(str).str.strip()
-    m = sis.merge(
-        bdr[
-            [
-                "doc",
-                "VP_BDR",
-                "PDD_BDR",
-                "FAIXA_BDR",
-                "FACE_BDR",
-                "NOME_SACADO",
-                "DOC_SACADO",
-            ]
-        ],
-        on="doc",
-        how="outer",
-        indicator=True,
-    )
+    bdr_idx = _index_bdr_por_doc(bdr_pos)
+    bdr_usados: set[int] = set()
+    linhas: list[dict[str, Any]] = []
+    for _, srow in sis.iterrows():
+        aliases = {
+            str(srow.get("documento") or "").strip(),
+            str(srow.get("nm_cessao_bdr") or "").strip(),
+            str(srow.get("chave") or "").strip(),
+        }
+        aliases.discard("")
+        hit_i = None
+        for alias in aliases:
+            if alias in bdr_idx:
+                hit_i = bdr_idx[alias]
+                break
+        rec = dict(srow)
+        if hit_i is not None:
+            brow = bdr_pos.loc[hit_i]
+            bdr_usados.add(hit_i)
+            rec["VP_BDR"] = brow["VP_BDR"]
+            rec["PDD_BDR"] = brow["PDD_BDR"]
+            rec["FAIXA_BDR"] = brow["FAIXA_BDR"]
+            rec["FACE_BDR"] = brow["FACE_BDR"]
+            rec["NOME_SACADO"] = brow.get("NOME_SACADO")
+            rec["DOC_SACADO"] = brow.get("DOC_SACADO")
+            rec["_merge"] = "both"
+        else:
+            rec["_merge"] = "left_only"
+        linhas.append(rec)
+
+    for i, brow in bdr_pos.iterrows():
+        if int(i) in bdr_usados:
+            continue
+        linhas.append(
+            {
+                "doc": brow["doc"],
+                "sacado": brow.get("NOME_SACADO"),
+                "VP_BDR": brow["VP_BDR"],
+                "PDD_BDR": brow["PDD_BDR"],
+                "FAIXA_BDR": brow["FAIXA_BDR"],
+                "FACE_BDR": brow["FACE_BDR"],
+                "_merge": "right_only",
+            }
+        )
+
+    m = pd.DataFrame(linhas)
 
     so_sistema = m[m["_merge"] == "left_only"].copy()
     so_bdr = m[m["_merge"] == "right_only"].copy()
     ambos = m[m["_merge"] == "both"].copy()
+    if "doc" not in ambos.columns:
+        ambos["doc"] = ambos.get("documento", "")
     ambos["DELTA_VP"] = (ambos["vl_presente_adm"].astype(float) - ambos["VP_BDR"]).round(2)
     ambos["DELTA_PDD"] = (ambos["vl_pdd"].astype(float) - ambos["PDD_BDR"]).round(2)
     faixa_diff = ambos[ambos["fx_pdd"] != ambos["FAIXA_BDR"]]
@@ -281,11 +356,13 @@ def detalhar_vs_bdr(
     dest = out_dir / data_ref.isoformat()
     dest.mkdir(parents=True, exist_ok=True)
     so_sistema[
-        ["doc", "sacado", "doc_sacado", "status", "data_vencimento", "vl_presente_adm", "vl_pdd", "fx_pdd"]
+        ["doc", "nm_cessao_bdr", "sacado", "doc_sacado", "status", "data_vencimento", "vl_presente_adm", "vl_pdd", "fx_pdd"]
     ].to_csv(dest / "so_sistema.csv", sep=";", index=False, encoding="utf-8-sig")
-    so_bdr[
-        ["doc", "NOME_SACADO", "DOC_SACADO", "VP_BDR", "PDD_BDR", "FAIXA_BDR", "FACE_BDR"]
-    ].to_csv(dest / "so_bdr.csv", sep=";", index=False, encoding="utf-8-sig")
+    cols_bdr = ["doc", "VP_BDR", "PDD_BDR", "FAIXA_BDR", "FACE_BDR"]
+    for c in ("sacado", "NOME_SACADO", "DOC_SACADO"):
+        if c in so_bdr.columns:
+            cols_bdr.insert(1, c)
+    so_bdr[cols_bdr].to_csv(dest / "so_bdr.csv", sep=";", index=False, encoding="utf-8-sig")
     faixa_diff[
         [
             "doc",
@@ -305,6 +382,7 @@ def detalhar_vs_bdr(
         "n_ambos": int(len(ambos)),
         "so_sistema": int(len(so_sistema)),
         "so_bdr": int(len(so_bdr)),
+        "n_residuos_bdr": int(len(bdr_res)),
         "faixa_divergente": int(len(faixa_diff)),
         "delta_vp_total": cent(ambos["DELTA_VP"].sum()) if len(ambos) else 0.0,
         "delta_pdd_total": cent(ambos["DELTA_PDD"].sum()) if len(ambos) else 0.0,
@@ -416,7 +494,13 @@ def conciliar_dia(
         delta_pdd_bdr = cent(float(sis["pdd"]) - float(bdr_tot["pdd"]))
         ok_bdr = abs(delta_vp_bdr) <= tol and abs(delta_pdd_bdr) <= tol
         print(
-            f"  BDR:     n={bdr_tot['n']} VP={bdr_tot['vp']:,.2f} PDD={bdr_tot['pdd']:,.2f}",
+            f"  BDR:     n={bdr_tot['n']} VP={bdr_tot['vp']:,.2f} PDD={bdr_tot['pdd']:,.2f}"
+            + (
+                f"  (resíduos VP≤0: n={bdr_tot.get('n_residuos_vp', 0)} "
+                f"VP={float(bdr_tot.get('vp_residuos') or 0):,.2f})"
+                if bdr_tot.get("n_residuos_vp")
+                else ""
+            ),
             flush=True,
         )
         print(
