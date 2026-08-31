@@ -36,6 +36,52 @@ def _tabela_ausente(exc: BaseException) -> bool:
     return "pgrst205" in msg or "could not find the table" in msg
 
 
+def _erro_transiente(exc: BaseException) -> bool:
+    msg = str(exc).lower()
+    nome = type(exc).__name__.lower()
+    return any(
+        s in msg or s in nome
+        for s in (
+            "10035",
+            "10054",
+            "10053",
+            "10060",
+            "wouldblock",
+            "temporarily unavailable",
+            "timeout",
+            "timed out",
+            "connection reset",
+            "connection aborted",
+            "server disconnected",
+            "remoteprotocolerror",
+            "connecterror",
+        )
+    )
+
+
+def _supabase_query(fn, *, retries: int = 4):
+    """Executa query Supabase com retentativas; None → usar fallback SQLite."""
+    import time
+
+    ultimo: Exception | None = None
+    for tentativa in range(1, retries + 1):
+        try:
+            return fn()
+        except Exception as exc:  # noqa: BLE001
+            ultimo = exc
+            if _tabela_ausente(exc):
+                return None
+            if _erro_transiente(exc) and tentativa < retries:
+                time.sleep(0.4 * tentativa)
+                continue
+            if _erro_transiente(exc):
+                return None
+            raise
+    if ultimo is not None:
+        raise ultimo
+    return None
+
+
 def _sqlite_path() -> Path | None:
     env = (os.getenv("PASSIVO_ALPHA_DB") or "").strip()
     if env:
@@ -168,29 +214,27 @@ def _next_id(tabela: str) -> int:
 
 
 def listar_classes(*, apenas_ativos: bool = False) -> list[dict[str, Any]]:
-    try:
+    def _q():
         sb = get_supabase()
         q = sb.table(TAB_CLASSES).select("*").order("id")
         if apenas_ativos:
             q = q.eq("ativo", True)
-        rows = q.execute().data or []
-        if rows:
-            return rows
-    except Exception as exc:  # noqa: BLE001
-        if not _tabela_ausente(exc):
-            raise
+        return q.execute().data or []
+
+    rows = _supabase_query(_q)
+    if rows:
+        return rows
     return _sqlite_classes(apenas_ativos=apenas_ativos)
 
 
 def listar_cotistas() -> list[dict[str, Any]]:
-    try:
+    def _q():
         sb = get_supabase()
-        rows = sb.table(TAB_COTISTAS).select("*").order("nome").execute().data or []
-        if rows:
-            return rows
-    except Exception as exc:  # noqa: BLE001
-        if not _tabela_ausente(exc):
-            raise
+        return sb.table(TAB_COTISTAS).select("*").order("nome").execute().data or []
+
+    rows = _supabase_query(_q)
+    if rows:
+        return rows
     return _sqlite_cotistas()
 
 
@@ -199,34 +243,32 @@ def listar_chamadas(
     classe_id: int | None = None,
     cotista_id: int | None = None,
 ) -> list[dict[str, Any]]:
-    try:
+    def _q():
         sb = get_supabase()
         q = sb.table(TAB_CHAMADAS).select("*").order("data_prazo").order("id")
         if classe_id is not None:
             q = q.eq("classe_id", classe_id)
         if cotista_id is not None:
             q = q.eq("cotista_id", cotista_id)
-        rows = q.execute().data or []
-        if rows:
-            return rows
-    except Exception as exc:  # noqa: BLE001
-        if not _tabela_ausente(exc):
-            raise
+        return q.execute().data or []
+
+    rows = _supabase_query(_q)
+    if rows:
+        return rows
     return _sqlite_chamadas(classe_id=classe_id, cotista_id=cotista_id)
 
 
 def obter_cotista(id_cotista: int) -> dict[str, Any] | None:
-    try:
+    def _q():
         sb = get_supabase()
-        rows = (
+        return (
             sb.table(TAB_COTISTAS).select("*").eq("id", id_cotista).limit(1).execute().data
             or []
         )
-        if rows:
-            return rows[0]
-    except Exception as exc:  # noqa: BLE001
-        if not _tabela_ausente(exc):
-            raise
+
+    rows = _supabase_query(_q)
+    if rows:
+        return rows[0]
     for c in _sqlite_cotistas():
         if int(c["id"]) == int(id_cotista):
             return c

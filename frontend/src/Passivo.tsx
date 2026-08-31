@@ -400,8 +400,14 @@ function Passivo({ dataBase: dataBaseProp }: PassivoProps) {
         if (cancelado) return
         if (!res.ok) {
           setExtratoCotista(null)
+          const det =
+            typeof json.detail === 'string'
+              ? json.detail
+              : 'Falha ao carregar extrato.'
           setErroExtrato(
-            typeof json.detail === 'string' ? json.detail : 'Falha ao carregar extrato.',
+            det.toLowerCase().includes('server disconnected')
+              ? 'Conexão com o banco interrompida — tente de novo em alguns segundos.'
+              : det,
           )
           return
         }
