@@ -13,8 +13,10 @@ export interface Kpis {
   prazo_medio: number
   hhi: number
   inadimplencia: number
-  /** Face adquirida do início até a data base (denominador da inadimplência) */
-  volume_aquisicoes_historico?: number
+  /** VNP acumulado (fundo inteiro) */
+  inadimplencia_vnp?: number
+  /** Vencimentos totais — denominador do KPI (fundo inteiro) */
+  inadimplencia_vencimentos?: number
   /** PL SUB / PL consolidado × 100 */
   subordinacao_pct?: number | null
   receita_projetada: number

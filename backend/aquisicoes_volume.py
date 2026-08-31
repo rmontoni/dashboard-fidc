@@ -1,8 +1,7 @@
 """Volume histórico de aquisições (fidc_aquisicoes) até a data base.
 
-Denominador da inadimplência do dashboard:
-  valor vencido (face) / total adquirido desde o início até a data base
-  (face = VALOR DE VENCIMENTO).
+Agregação histórica de aquisições (face = VALOR DE VENCIMENTO).
+O KPI de inadimplência do dashboard usa VNP/vencimentos totais (ver inadimplencia.py).
 
 Agrega por dia e grava cache em data/aquisicoes_agg_cache.json.
 """

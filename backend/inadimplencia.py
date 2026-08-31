@@ -15,10 +15,14 @@ from db import get_supabase
 
 PAGE = 1000
 INDICE_PATH = Path(__file__).resolve().parent / "data" / "inadimplencia_indice.json"
+INDICE_FUNDO_PATH = (
+    Path(__file__).resolve().parent / "data" / "inadimplencia_indice_fundo.json"
+)
 INDICE_VERSAO = 2
 _CADASTRO_TTL_S = 30 * 60
 _CADASTRO_MEM: tuple[float, dict[str, dict[str, Any]]] | None = None
 _INDICE_MEM: tuple[str, list[dict[str, Any]]] | None = None
+_INDICE_FUNDO_MEM: tuple[str, list[dict[str, Any]]] | None = None
 _PAYLOAD_MEM: dict[str, tuple[str, dict[str, Any]]] = {}
 NOMES_CONSIG = ("BMP", "VIA CAPITAL", "CARTOS")
 MESES_PT = (
@@ -251,8 +255,12 @@ def _ultimo_curva(curva: list, limite: str):
     return val
 
 
-def _montar_indice(cadastro: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
-    """Histórico compacto só do consignado (base + todos os eventos)."""
+def _montar_indice(
+    cadastro: dict[str, dict[str, Any]],
+    *,
+    consignado_only: bool = True,
+) -> list[dict[str, Any]]:
+    """Histórico compacto (base + eventos). Consignado ou fundo inteiro."""
     from carteira_movimentacoes import (
         DATA_MINIMA,
         _carregar_eventos,
@@ -265,7 +273,7 @@ def _montar_indice(cadastro: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
     for chave, pos in base.items():
         doc = str(pos.get("documento") or chave)
         cedente = str(pos.get("cedente") or "")
-        if not _e_consignado(cadastro.get(doc), cedente):
+        if consignado_only and not _e_consignado(cadastro.get(doc), cedente):
             continue
         orig = _parse_data_campo(pos.get("data_aquisicao")) or _parse_data_campo(
             pos.get("data_emissao")
@@ -286,7 +294,7 @@ def _montar_indice(cadastro: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
             doc = str(ev.get("documento") or chave)
             cedente = str(ev.get("cedente") or "")
             if chave not in cohort:
-                if not _e_consignado(cadastro.get(doc), cedente):
+                if consignado_only and not _e_consignado(cadastro.get(doc), cedente):
                     continue
                 cohort[chave] = _titulo_novo(chave, doc, cedente, None, None, 0.0, 0.0)
             c = cohort[chave]
@@ -317,28 +325,30 @@ def _montar_indice(cadastro: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
     return [_compactar_titulo(t) for t in cohort.values()]
 
 
-def _carregar_indice(cadastro: dict[str, dict[str, Any]] | None = None) -> list[dict[str, Any]]:
-    global _INDICE_MEM, _PAYLOAD_MEM
+def _carregar_indice_arquivo(
+    path: Path,
+    mem: tuple[str, list[dict[str, Any]]] | None,
+    *,
+    consignado_only: bool,
+    cadastro: dict[str, dict[str, Any]] | None = None,
+) -> tuple[tuple[str, list[dict[str, Any]]] | None, list[dict[str, Any]]]:
     sig = _assinatura_indice()
-    if _INDICE_MEM is not None and _INDICE_MEM[0] == sig:
-        return _INDICE_MEM[1]
-    if INDICE_PATH.exists():
+    if mem is not None and mem[0] == sig:
+        return mem, mem[1]
+    if path.exists():
         try:
-            raw = json.loads(INDICE_PATH.read_text(encoding="utf-8"))
+            raw = json.loads(path.read_text(encoding="utf-8"))
             if raw.get("assinatura") == sig and isinstance(raw.get("titulos"), list):
                 titulos = raw["titulos"]
-                _INDICE_MEM = (sig, titulos)
-                return titulos
+                return (sig, titulos), titulos
         except (OSError, json.JSONDecodeError, TypeError):
             pass
     if cadastro is None:
-        cadastro = _carregar_cadastro()
-    titulos = _montar_indice(cadastro)
-    _INDICE_MEM = (sig, titulos)
-    _PAYLOAD_MEM.clear()
+        cadastro = _carregar_cadastro() if consignado_only else {}
+    titulos = _montar_indice(cadastro, consignado_only=consignado_only)
     try:
-        INDICE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        INDICE_PATH.write_text(
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
             json.dumps(
                 {"assinatura": sig, "titulos": titulos},
                 ensure_ascii=False,
@@ -348,6 +358,28 @@ def _carregar_indice(cadastro: dict[str, dict[str, Any]] | None = None) -> list[
         )
     except OSError:
         pass
+    return (sig, titulos), titulos
+
+
+def _carregar_indice(cadastro: dict[str, dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+    global _INDICE_MEM, _PAYLOAD_MEM
+    _INDICE_MEM, titulos = _carregar_indice_arquivo(
+        INDICE_PATH,
+        _INDICE_MEM,
+        consignado_only=True,
+        cadastro=cadastro,
+    )
+    _PAYLOAD_MEM.clear()
+    return titulos
+
+
+def _carregar_indice_fundo() -> list[dict[str, Any]]:
+    global _INDICE_FUNDO_MEM
+    _INDICE_FUNDO_MEM, titulos = _carregar_indice_arquivo(
+        INDICE_FUNDO_PATH,
+        _INDICE_FUNDO_MEM,
+        consignado_only=False,
+    )
     return titulos
 
 
@@ -382,11 +414,10 @@ def _titulo_asof(t: dict[str, Any], dt: date, limite: str) -> dict[str, Any] | N
     }
 
 
-def _cohort_consignado(dt: date, cadastro: dict[str, dict[str, Any]] | None = None) -> list[dict[str, Any]]:
-    """Títulos consignados (abertos e baixados) na data base, a partir do índice."""
+def _cohort_asof(dt: date, indice: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Títulos na data base (abertos e baixados), com repactuações."""
     from carteira_movimentacoes import REPACTUACOES
 
-    indice = _carregar_indice(cadastro)
     limite = dt.isoformat()
     out: list[dict[str, Any]] = []
     by_chave: dict[str, dict[str, Any]] = {}
@@ -415,6 +446,41 @@ def _cohort_consignado(dt: date, cadastro: dict[str, dict[str, Any]] | None = No
         if venc:
             pos["venc"] = _to_date(venc)
     return out
+
+
+def _cohort_consignado(dt: date, cadastro: dict[str, dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+    """Títulos consignados (abertos e baixados) na data base, a partir do índice."""
+    return _cohort_asof(dt, _carregar_indice(cadastro))
+
+
+def _cohort_fundo(dt: date) -> list[dict[str, Any]]:
+    """Todos os títulos do fundo na data base."""
+    return _cohort_asof(dt, _carregar_indice_fundo())
+
+
+def _totais_vnp_vencimentos(titulos: list[dict[str, Any]], dt: date) -> dict[str, float]:
+    """VNP acumulado / vencimentos totais (face vencida / face original)."""
+    tot_vnp = 0.0
+    tot_venc = 0.0
+    for t in titulos:
+        orig_d = t.get("orig")
+        venc_d = t.get("venc")
+        if orig_d is None:
+            continue
+        rest = _money(t.get("face_rest"))
+        orig_face = _money(t.get("face_orig"))
+        if orig_face <= 0 and rest <= 0:
+            continue
+        if venc_d is None:
+            continue
+        if venc_d < dt:
+            tot_vnp += rest
+            tot_venc += orig_face if orig_face > 0 else rest
+    return {
+        "pct": _pct(tot_vnp, tot_venc),
+        "vnp": round(tot_vnp, 2),
+        "vencimentos": round(tot_venc, 2),
+    }
 
 
 def _vazio_vnp() -> dict[str, Any]:
@@ -926,6 +992,12 @@ def montar_inadimplencia(data_base: str) -> dict[str, Any]:
     }
     _guardar_payload(chave_dt, sig, payload)
     return payload
+
+
+def pct_vnp_vencimentos_total(data_base: str) -> dict[str, float]:
+    """KPI do dashboard: VNP / vencimentos totais (fundo inteiro)."""
+    dt = _parse_data_base(data_base)
+    return _totais_vnp_vencimentos(_cohort_fundo(dt), dt)
 
 
 def montar_fluxo_caixa(data_base: str) -> dict[str, Any]:

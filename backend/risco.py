@@ -184,7 +184,8 @@ def calcular_pl_liquidez(data_base_filtro: str) -> dict:
             "prazo_medio": 0.0,
             "hhi": 0,
             "inadimplencia": 0.0,
-            "volume_aquisicoes_historico": 0.0,
+            "inadimplencia_vnp": 0.0,
+            "inadimplencia_vencimentos": 0.0,
             "receita_projetada": 0.0,
             "taxa_media": 0.0,
             "taxa_recompra": float(taxas_mov.get("taxa_recompra") or 0.0),
@@ -364,20 +365,18 @@ def calcular_risco_fidc(data_base_filtro: str) -> dict:
         & (~df_atual["status"].isin(status_fora_atraso))
     )
 
-    vol_atraso = df_atual.loc[condicao_atraso, "valor_face"].sum()
+    # Inadimplência (KPI dashboard) = VNP / vencimentos totais (fundo inteiro).
+    try:
+        from inadimplencia import pct_vnp_vencimentos_total
 
-    # Inadimplência = face vencida / aquisições históricas até a data base.
-    from aquisicoes_volume import total_aquisicoes_ate
-
-    aq_hist = total_aquisicoes_ate(data_alvo.date())
-    vol_aquisicoes_hist = float(aq_hist.get("total") or 0.0)
-    if vol_aquisicoes_hist > 0:
-        inadimplencia_pct = float(vol_atraso / vol_aquisicoes_hist) * 100
-    elif vol_face_total > 0:
-        # Fallback se o cache/BD de aquisições ainda não estiver disponível.
-        inadimplencia_pct = float(vol_atraso / vol_face_total) * 100
-    else:
+        vnp_kpi = pct_vnp_vencimentos_total(data_base_filtro)
+        inadimplencia_pct = float(vnp_kpi.get("pct") or 0.0)
+        inadimplencia_vnp = float(vnp_kpi.get("vnp") or 0.0)
+        inadimplencia_vencimentos = float(vnp_kpi.get("vencimentos") or 0.0)
+    except Exception:  # noqa: BLE001
         inadimplencia_pct = 0.0
+        inadimplencia_vnp = 0.0
+        inadimplencia_vencimentos = 0.0
 
     # PDD: preferir vl_pdd calculado na marcação (VP × faixa); senão aging por face
     df_atual["dias_atraso_calc"] = (data_alvo - df_atual["data_vencimento"]).dt.days
@@ -952,7 +951,8 @@ def calcular_risco_fidc(data_base_filtro: str) -> dict:
             "prazo_medio": round(prazo_medio, 1),
             "hhi": int(round(float(hhi_calc), 0)),
             "inadimplencia": round(float(inadimplencia_pct), 2),
-            "volume_aquisicoes_historico": round(float(vol_aquisicoes_hist), 2),
+            "inadimplencia_vnp": round(float(inadimplencia_vnp), 2),
+            "inadimplencia_vencimentos": round(float(inadimplencia_vencimentos), 2),
             "receita_projetada": round(float(receita_projetada_total), 2),
             "taxa_media": round(float(taxa_media), 2),
             "taxa_recompra": round(float(taxa_recompra), 2),

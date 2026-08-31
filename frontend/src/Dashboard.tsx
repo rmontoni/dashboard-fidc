@@ -47,7 +47,8 @@ const KPI_VAZIO: Kpis = {
   prazo_medio: 0,
   hhi: 0,
   inadimplencia: 0,
-  volume_aquisicoes_historico: 0,
+  inadimplencia_vnp: 0,
+  inadimplencia_vencimentos: 0,
   subordinacao_pct: null,
   receita_projetada: 0,
   taxa_media: 0,
@@ -535,7 +536,7 @@ function Dashboard({ fundoNome }: DashboardProps) {
         <article className="kpi">
           <span>Inadimplência</span>
           <strong>{num(indicadores.inadimplencia).toFixed(2)}%</strong>
-          <small className="kpi-nota">vencido / aquisições até a data base</small>
+          <small className="kpi-nota">VNP / vencimentos totais</small>
         </article>
         <article className="kpi">
           <span>% Subordinação</span>
