@@ -910,8 +910,16 @@ function Passivo({ dataBase: dataBaseProp }: PassivoProps) {
           {erroExtrato && <div className="banner-status banner-data">{erroExtrato}</div>}
 
           {!carregandoExtrato && graficoExtratoCotista.length > 0 && (
-            <div className="chart-wrap chart-fluxo">
-              <ComposedChart data={graficoExtratoCotista} height={360}>
+            <>
+              <h3 className="extrato-serie-titulo">Evolução dia a dia</h3>
+              <div className="chart-wrap chart-fluxo">
+                <ComposedChart
+                  responsive
+                  width="100%"
+                  height={360}
+                  data={graficoExtratoCotista}
+                  margin={{ top: 12, right: 20, left: 8, bottom: 8 }}
+                >
                 <CartesianGrid strokeDasharray="3 3" stroke="#e8edf2" />
                 <XAxis
                   dataKey="label"
@@ -967,7 +975,33 @@ function Passivo({ dataBase: dataBaseProp }: PassivoProps) {
                   isAnimationActive={false}
                 />
               </ComposedChart>
-            </div>
+              </div>
+
+              {extratoCotista && extratoCotista.serie.length > 0 && (
+                <div className="tabela-scroll extrato-serie-scroll">
+                  <table className="tabela-passivo">
+                    <thead>
+                      <tr>
+                        <th>Data</th>
+                        <th>Aplicado</th>
+                        <th>VP remanescente</th>
+                        <th>Chamadas</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[...extratoCotista.serie].reverse().map((row) => (
+                        <tr key={row.data}>
+                          <td>{row.data.split('-').reverse().join('/')}</td>
+                          <td>{formatarMoeda(row.aplicado)}</td>
+                          <td>{formatarMoeda(row.vp)}</td>
+                          <td>{row.n_chamadas}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
           )}
 
           {!carregandoExtrato && extratoCotista && extratoCotista.serie.length === 0 && (

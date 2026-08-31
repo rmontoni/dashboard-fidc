@@ -1344,6 +1344,17 @@ td.alerta-pct {
   cursor: pointer;
 }
 
+.extrato-serie-titulo {
+  margin: 16px 0 8px;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.extrato-serie-scroll {
+  max-height: 420px;
+  margin-top: 16px;
+}
+
 .tabela-scroll {
   max-height: 360px;
   overflow: auto;

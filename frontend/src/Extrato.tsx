@@ -307,7 +307,13 @@ function Extrato() {
             <h2>Evolução diária</h2>
           </div>
           <div className="chart-wrap chart-fluxo">
-            <ComposedChart data={grafico} height={360}>
+            <ComposedChart
+              responsive
+              width="100%"
+              height={360}
+              data={grafico}
+              margin={{ top: 12, right: 20, left: 8, bottom: 8 }}
+            >
               <CartesianGrid strokeDasharray="3 3" stroke="#e8edf2" />
               <XAxis
                 dataKey="label"
@@ -373,6 +379,33 @@ function Extrato() {
               />
             </ComposedChart>
           </div>
+
+          {extrato && extrato.serie.length > 0 && (
+            <div className="tabela-scroll extrato-serie-scroll">
+              <table className="tabela-passivo">
+                <thead>
+                  <tr>
+                    <th>Data</th>
+                    <th>Face</th>
+                    <th>VP</th>
+                    <th>PDD</th>
+                    <th>Títulos</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[...extrato.serie].reverse().map((row) => (
+                    <tr key={row.data}>
+                      <td>{row.data.split('-').reverse().join('/')}</td>
+                      <td>{formatarMoeda(row.face)}</td>
+                      <td>{formatarMoeda(row.vp)}</td>
+                      <td>{formatarMoeda(row.pdd)}</td>
+                      <td>{row.n_titulos}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </section>
       )}
 
