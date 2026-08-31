@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import Configuracoes from './Configuracoes'
 import Dashboard from './Dashboard'
 import Divergencias from './Divergencias'
+import Extrato from './Extrato'
 import FluxoCaixa from './FluxoCaixa'
 import Inadimplencia from './Inadimplencia'
 import Passivo from './Passivo'
@@ -13,6 +14,7 @@ import './App.css'
 type Pagina =
   | 'dashboard'
   | 'passivo'
+  | 'extrato'
   | 'pdd'
   | 'inadimplencia'
   | 'fluxo-caixa'
@@ -49,6 +51,7 @@ export const STORAGE_DATA_BASE = 'fidc_data_base'
 const PAGINAS: Pagina[] = [
   'dashboard',
   'passivo',
+  'extrato',
   'pdd',
   'inadimplencia',
   'fluxo-caixa',
@@ -168,6 +171,17 @@ function App() {
     }
   }, [atualizando])
 
+  async function cancelarAtualizacao() {
+    try {
+      const res = await fetch(`${API_BASE}/fidc/atualizar/cancelar`, { method: 'POST' })
+      const dados = await res.json()
+      setStatusAtualizacao(dados)
+      setAtualizando(false)
+    } catch {
+      /* ignora */
+    }
+  }
+
   async function iniciarAtualizacao() {
     if (atualizando) return
     setAtualizando(true)
@@ -226,6 +240,13 @@ function App() {
           </button>
           <button
             type="button"
+            className={pagina === 'extrato' ? 'nav-item ativo' : 'nav-item'}
+            onClick={() => setPagina('extrato')}
+          >
+            Extrato
+          </button>
+          <button
+            type="button"
             className={pagina === 'pdd' ? 'nav-item ativo' : 'nav-item'}
             onClick={() => setPagina('pdd')}
           >
@@ -271,6 +292,15 @@ function App() {
           </button>
           {atualizando && etapaAtual && (
             <span className="sidebar-atualizar-etapa">{etapaAtual}</span>
+          )}
+          {atualizando && (
+            <button
+              type="button"
+              className="sidebar-cancelar-atualizacao"
+              onClick={() => void cancelarAtualizacao()}
+            >
+              Cancelar atualização
+            </button>
           )}
           {!atualizando && statusAtualizacao?.status === 'erro' && statusAtualizacao.erro && (
             <span className="sidebar-atualizar-erro" title={statusAtualizacao.erro}>
@@ -326,6 +356,7 @@ function App() {
       <main className="shell-conteudo">
         {pagina === 'dashboard' && <Dashboard fundoNome={fundo?.nome} />}
         {pagina === 'passivo' && <Passivo />}
+        {pagina === 'extrato' && <Extrato />}
         {pagina === 'pdd' && <Pdd />}
         {pagina === 'inadimplencia' && <Inadimplencia />}
         {pagina === 'fluxo-caixa' && <FluxoCaixa />}

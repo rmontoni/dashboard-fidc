@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Callable
 from datetime import date, datetime, timedelta, timezone
 
 from dotenv import load_dotenv
@@ -31,7 +32,11 @@ load_dotenv()
 TOLERANCIA_DC_ABS = 500.0
 
 
-def atualizar_desde(desde: date) -> dict:
+def atualizar_desde(
+    desde: date,
+    *,
+    progresso: Callable[[str, dict[str, float]], None] | None = None,
+) -> dict:
     t0 = time.perf_counter()
     serie = dict(mapa_dc_bdr_diario())
     eventos = _carregar_eventos(desde=DATA_MINIMA)
@@ -128,6 +133,8 @@ def atualizar_desde(desde: date) -> dict:
             if salto_meta:
                 row["salto_prazo_n"] = float(salto_meta.get("n") or 0)
         serie[d_iso] = row
+        if progresso is not None and d_iso >= desde_iso:
+            progresso(d_iso, row)
         marca = "ok " if row.get("conciliada") else "DIV"
         print(
             f"[{time.perf_counter() - t0:>5.0f}s] {d_iso} {marca} "

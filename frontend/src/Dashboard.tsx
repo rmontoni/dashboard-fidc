@@ -557,7 +557,7 @@ function Dashboard({ fundoNome }: DashboardProps) {
           <span>Taxa média a.m.</span>
           <strong>{num(indicadores.taxa_media).toFixed(2)}%</strong>
         </article>
-        <article className={`kpi ${classeAlertaPct(taxaBaixaRecompra)}`}>
+        <article className="kpi">
           <span>Taxa de Baixa/Recompra</span>
           <strong>{taxaBaixaRecompra.toFixed(2)}%</strong>
         </article>
@@ -1179,13 +1179,6 @@ function GraficoPizza({
       </div>
     </div>
   )
-}
-
-function classeAlertaPct(valor: number | undefined | null): string {
-  const v = num(valor)
-  if (v > 25) return 'alerta-pct alerta-pct-alto'
-  if (v >= 10) return 'alerta-pct alerta-pct-medio'
-  return 'alerta-pct'
 }
 
 function ConcentracaoTabela({

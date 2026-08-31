@@ -42,7 +42,19 @@ const CHAMADA_VAZIA = {
   credito_vp: '0',
 }
 
-type AbaConfig = 'fundos' | 'classes' | 'cotistas' | 'chamadas'
+type AbaConfig = 'fundos' | 'classes' | 'cotistas' | 'chamadas' | 'pd'
+
+type ParametrosPd = {
+  pd_min_consignado: number
+  pd_consignado_vencido: number
+  redutor: number
+}
+
+const PD_VAZIO = {
+  pd_min_consignado: '15',
+  pd_consignado_vencido: '80',
+  redutor: '0.5',
+}
 
 type ClasseRow = {
   id: number
@@ -102,6 +114,9 @@ export default function Configuracoes({
   const [editandoChamadaId, setEditandoChamadaId] = useState<number | null>(null)
   const [formChamada, setFormChamada] = useState({ ...CHAMADA_VAZIA })
 
+  const [formPd, setFormPd] = useState({ ...PD_VAZIO })
+  const [descricaoPd, setDescricaoPd] = useState<Record<string, string>>({})
+
   async function carregarFundos() {
     const res = await fetch(`${API_BASE}/fidc/fundos`)
     if (!res.ok) {
@@ -130,12 +145,67 @@ export default function Configuracoes({
     else setChamadas([])
   }
 
+  async function carregarPd() {
+    const res = await fetch(`${API_BASE}/fidc/config/pd`)
+    if (!res.ok) {
+      const detalhe = await res.json().catch(() => ({}))
+      throw new Error(detalhe.detail || `HTTP ${res.status}`)
+    }
+    const dados = await res.json()
+    const p = (dados.parametros ?? {}) as ParametrosPd
+    setFormPd({
+      pd_min_consignado: String(p.pd_min_consignado ?? PD_VAZIO.pd_min_consignado),
+      pd_consignado_vencido: String(
+        p.pd_consignado_vencido ?? PD_VAZIO.pd_consignado_vencido,
+      ),
+      redutor: String(p.redutor ?? PD_VAZIO.redutor),
+    })
+    setDescricaoPd(dados.descricao ?? {})
+  }
+
+  async function salvarPd(e: FormEvent) {
+    e.preventDefault()
+    setErro(null)
+    setOk(null)
+    setCarregando(true)
+    try {
+      const payload = {
+        pd_min_consignado: Number(formPd.pd_min_consignado),
+        pd_consignado_vencido: Number(formPd.pd_consignado_vencido),
+        redutor: Number(formPd.redutor),
+      }
+      const res = await fetch(`${API_BASE}/fidc/config/pd`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      if (!res.ok) {
+        const detalhe = await res.json().catch(() => ({}))
+        throw new Error(detalhe.detail || `HTTP ${res.status}`)
+      }
+      const dados = await res.json()
+      const p = dados.parametros as ParametrosPd
+      setFormPd({
+        pd_min_consignado: String(p.pd_min_consignado),
+        pd_consignado_vencido: String(p.pd_consignado_vencido),
+        redutor: String(p.redutor),
+      })
+      setDescricaoPd(dados.descricao ?? {})
+      setOk('Parâmetros de PD salvos.')
+    } catch (err) {
+      setErro(err instanceof Error ? err.message : 'Falha ao salvar parâmetros de PD')
+    } finally {
+      setCarregando(false)
+    }
+  }
+
   async function carregar() {
     setErro(null)
     setCarregando(true)
     try {
       await carregarFundos()
       await carregarPassivoCadastro()
+      await carregarPd()
     } catch (e) {
       setErro(
         e instanceof Error
@@ -490,6 +560,7 @@ export default function Configuracoes({
             ['classes', 'Classes'],
             ['cotistas', 'Cotistas'],
             ['chamadas', 'Chamadas'],
+            ['pd', 'PD estimada'],
           ] as const
         ).map(([id, rotulo]) => (
           <button
@@ -1140,6 +1211,74 @@ export default function Configuracoes({
             </section>
           </div>
         </>
+      )}
+
+      {aba === 'pd' && (
+        <div className="config-grid config-grid-unica">
+          <section className="painel">
+            <h2>PD estimada (projeção de caixa)</h2>
+            <p className="texto-auxiliar">
+              Usada no Dashboard e no fluxo de caixa projetado. Alterações passam a valer
+              imediatamente na API (persistidas em disco no servidor).
+            </p>
+            <form className="form-fundo form-pd" onSubmit={salvarPd}>
+              <label>
+                PD mínima — consignado (%)
+                <input
+                  type="number"
+                  step="0.1"
+                  min={0}
+                  max={100}
+                  value={formPd.pd_min_consignado}
+                  onChange={(e) =>
+                    setFormPd({ ...formPd, pd_min_consignado: e.target.value })
+                  }
+                  required
+                />
+                {descricaoPd.pd_min_consignado && (
+                  <span className="hint-campo">{descricaoPd.pd_min_consignado}</span>
+                )}
+              </label>
+              <label>
+                PD consignado com parcela vencida (%)
+                <input
+                  type="number"
+                  step="0.1"
+                  min={0}
+                  max={100}
+                  value={formPd.pd_consignado_vencido}
+                  onChange={(e) =>
+                    setFormPd({ ...formPd, pd_consignado_vencido: e.target.value })
+                  }
+                  required
+                />
+                {descricaoPd.pd_consignado_vencido && (
+                  <span className="hint-campo">{descricaoPd.pd_consignado_vencido}</span>
+                )}
+              </label>
+              <label>
+                Redutor da fórmula base
+                <input
+                  type="number"
+                  step="0.05"
+                  min={0}
+                  max={10}
+                  value={formPd.redutor}
+                  onChange={(e) => setFormPd({ ...formPd, redutor: e.target.value })}
+                  required
+                />
+                {descricaoPd.redutor && (
+                  <span className="hint-campo">{descricaoPd.redutor}</span>
+                )}
+              </label>
+              <div className="form-acoes">
+                <button type="submit" className="btn-primario" disabled={carregando}>
+                  Salvar parâmetros
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
       )}
     </div>
   )

@@ -294,6 +294,28 @@ body {
   gap: 16px;
 }
 
+.config-grid-unica {
+  grid-template-columns: minmax(0, 560px);
+}
+
+.texto-auxiliar {
+  margin: 0 0 16px;
+  color: var(--texto-suave, #64748b);
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.hint-campo {
+  font-size: 0.78rem;
+  color: var(--texto-suave, #64748b);
+  font-weight: 400;
+  line-height: 1.35;
+}
+
+.form-pd {
+  max-width: 420px;
+}
+
 @media (max-width: 960px) {
   .shell,
   .shell-menu-fechado {
@@ -1218,6 +1240,25 @@ td.alerta-pct {
   color: #fff;
 }
 
+.sidebar-atualizar-etapa {
+  display: block;
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.sidebar-cancelar-atualizacao {
+  display: block;
+  margin-top: 6px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: #b45309;
+  font-size: 0.78rem;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
 .config-toolbar {
   display: flex;
   align-items: center;
@@ -1232,6 +1273,75 @@ td.alerta-pct {
 
 .passivo-kpis {
   margin-bottom: 14px;
+}
+
+.extrato-filtros {
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.extrato-modos {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.extrato-modos-label {
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin-right: 4px;
+}
+
+.extrato-modos button {
+  border: 1px solid var(--border);
+  background: #fff;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.extrato-modos button.ativo {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.filtro-classes-cota {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+  font-size: 0.88rem;
+}
+
+.filtro-classes-cota > span {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.filtro-classes-cota > button {
+  border: 1px solid var(--border);
+  background: #fff;
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.filtro-classes-cota > button.ativo {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.check-classe-cota {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
 }
 
 .tabela-scroll {

@@ -4,7 +4,6 @@ import {
   CartesianGrid,
   ComposedChart,
   Legend,
-  Line,
   Tooltip,
   XAxis,
   YAxis,
@@ -143,6 +142,7 @@ export default function FluxoCaixa() {
     return (projecao?.serie ?? []).map((p) => ({
       mes: String(p.mes || ''),
       mes_ano: String(p.mes_ano || p.mes || ''),
+      data: String(p.data || ''),
       entradas_ativos: Number(p.entradas_ativos ?? 0),
       saidas_passivo: Number(p.saidas_passivo ?? 0),
       liquido: Number(p.liquido ?? 0),
@@ -394,9 +394,9 @@ export default function FluxoCaixa() {
               <CartesianGrid strokeDasharray="3 3" stroke="#d8e0ea" />
               <XAxis
                 dataKey="mes_ano"
-                tick={{ fill: '#5a6b7d', fontSize: 11 }}
+                tick={{ fill: '#5a6b7d', fontSize: 10 }}
                 interval="preserveStartEnd"
-                minTickGap={28}
+                minTickGap={36}
               />
               <YAxis
                 tick={{ fill: '#5a6b7d', fontSize: 12 }}
@@ -413,11 +413,15 @@ export default function FluxoCaixa() {
                   formatarMoeda(Number(value ?? 0)),
                   String(name),
                 ]}
-                labelFormatter={(label, payload) => {
-                  const tipo = payload?.[0]?.payload?.tipo
-                  const sufixo =
-                    tipo === 'projetado' ? ' · projetado' : ' · real'
-                  return `${String(label)}${sufixo}`
+                labelFormatter={(_label, payload) => {
+                  const row = payload?.[0]?.payload as
+                    | { data?: string; mes_ano?: string; tipo?: string }
+                    | undefined
+                  const dia = row?.data
+                    ? row.data.split('-').reverse().join('/')
+                    : String(row?.mes_ano ?? '')
+                  const sufixo = row?.tipo === 'projetado' ? ' · projetado' : ' · real'
+                  return `${dia}${sufixo}`
                 }}
                 contentStyle={{
                   background: '#0f2740',
@@ -435,28 +439,8 @@ export default function FluxoCaixa() {
                 fill="#1f6f8b"
                 fillOpacity={0.18}
                 strokeWidth={2.5}
-                dot={{ r: 2.5, fill: '#1f6f8b' }}
-                activeDot={{ r: 5 }}
-                isAnimationActive={false}
-              />
-              <Line
-                type="monotone"
-                dataKey="entradas_ativos"
-                name="Liquidações (após PD)"
-                stroke="#2a9d8f"
-                strokeWidth={1.75}
-                strokeDasharray="5 4"
                 dot={false}
-                isAnimationActive={false}
-              />
-              <Line
-                type="monotone"
-                dataKey="saidas_passivo"
-                name="Amortizações"
-                stroke="#c45c26"
-                strokeWidth={1.75}
-                strokeDasharray="5 4"
-                dot={false}
+                activeDot={{ r: 4 }}
                 isAnimationActive={false}
               />
             </ComposedChart>

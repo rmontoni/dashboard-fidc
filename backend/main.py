@@ -83,6 +83,12 @@ class ConciliarLocalBody(BaseModel):
     observacao: str | None = None
 
 
+class PdParametrosBody(BaseModel):
+    pd_min_consignado: float = Field(ge=0, le=100)
+    pd_consignado_vencido: float = Field(ge=0, le=100)
+    redutor: float = Field(ge=0, le=10)
+
+
 @app.get("/health")
 def health():
     return {
@@ -134,6 +140,40 @@ def patch_fundo(id_fundo: int, body: FundoUpdate):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/fidc/config/pd")
+def get_config_pd():
+    """Parâmetros da PD estimada (fluxo de caixa e dashboard)."""
+    try:
+        from pd_estimada import carregar_config_pd, parametros_pd
+
+        return {"parametros": carregar_config_pd(), "descricao": _descricao_pd()}
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.patch("/fidc/config/pd")
+def patch_config_pd(body: PdParametrosBody):
+    try:
+        from pd_estimada import salvar_parametros_pd
+
+        params = salvar_parametros_pd(body.model_dump())
+        if params["pd_consignado_vencido"] < params["pd_min_consignado"]:
+            raise ValueError("PD consignado vencido deve ser >= PD mínima.")
+        return {"parametros": params, "descricao": _descricao_pd()}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+def _descricao_pd() -> dict[str, str]:
+    return {
+        "pd_min_consignado": "Piso de PD (%) para crédito consignado sem parcela vencida.",
+        "pd_consignado_vencido": "PD (%) aplicada ao consignado desde a 1ª parcela vencida do sacado.",
+        "redutor": "Multiplicador sobre (face em atraso / face total do sacado) × 100.",
+    }
 
 
 @app.get("/fidc/datas")
@@ -259,6 +299,17 @@ def get_atualizar_status():
         from atualizar_bases import status_job
 
         return status_job()
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/fidc/atualizar/cancelar")
+def post_cancelar_atualizacao():
+    """Cancela job de atualização em andamento (libera servidor)."""
+    try:
+        from atualizar_bases import cancelar_job
+
+        return cancelar_job()
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -409,6 +460,91 @@ def get_passivo_cotista_posicao(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/fidc/passivo/extrato-cotista")
+def get_passivo_extrato_cotista(
+    cotistaId: int = Query(..., description="ID do cotista"),
+    dataBase: str = Query(..., description="Data base dd/mm/yyyy ou YYYY-MM-DD"),
+    classeIds: str | None = Query(
+        None,
+        description="IDs de classe separados por vírgula (vazio = todas)",
+    ),
+):
+    """Evolução diária da posição do cotista (motor passivo)."""
+    try:
+        from passivo_vencimentos import montar_extrato_cotista
+
+        ids: list[int] | None = None
+        if classeIds and classeIds.strip():
+            ids = [int(x.strip()) for x in classeIds.split(",") if x.strip()]
+        return montar_extrato_cotista(cotistaId, dataBase, classe_ids=ids)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/fidc/passivo/cotistas/{cotista_id}/extrato")
+def get_passivo_cotista_extrato(
+    cotista_id: int,
+    dataBase: str = Query(..., description="Data base dd/mm/yyyy ou YYYY-MM-DD"),
+    classeIds: str | None = Query(
+        None,
+        description="IDs de classe separados por vírgula (vazio = todas)",
+    ),
+):
+    """Evolução diária da posição do cotista (motor passivo)."""
+    try:
+        from passivo_vencimentos import montar_extrato_cotista
+
+        ids: list[int] | None = None
+        if classeIds and classeIds.strip():
+            ids = [int(x.strip()) for x in classeIds.split(",") if x.strip()]
+        return montar_extrato_cotista(cotista_id, dataBase, classe_ids=ids)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/fidc/extrato/sacados")
+def get_extrato_sacados_lista(
+    dataBase: str = Query(..., description="Data base dd/mm/yyyy ou YYYY-MM-DD"),
+):
+    """Lista sacados com posição na data base."""
+    try:
+        from extrato_sacado import listar_sacados
+
+        return listar_sacados(dataBase)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/fidc/extrato/sacado")
+def get_extrato_sacado(
+    sacado: str = Query(..., description="Nome ou documento do sacado"),
+    dataBase: str = Query(..., description="Data base dd/mm/yyyy ou YYYY-MM-DD"),
+    modo: str = Query(
+        "motor",
+        description="motor (sem juros pós-venc) ou juros_pos_venc",
+    ),
+):
+    """Evolução diária da posição do sacado (motor de carteira)."""
+    try:
+        from extrato_sacado import montar_extrato_sacado
+
+        return montar_extrato_sacado(sacado, dataBase, modo=modo)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 

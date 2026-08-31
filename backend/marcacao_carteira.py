@@ -152,12 +152,14 @@ def vp_por_prazo(
     prazo: float | int,
     *,
     prazo_atual: float | int | None = None,
+    acumular_juros_pos_venc: bool = False,
 ) -> float:
     """
     Marcação do registrador: VP = face / (face/compra) ** (DU_atual / PRAZO).
 
     PRAZO é o prazo contratual congelado na aquisição (coluna PRAZO do EstoqueBDR).
     DU_atual vem do PRAZO_ATUAL do dia (se houver) ou do calendário do motor.
+    Com acumular_juros_pos_venc, DU negativo após o vencimento continua a taxa contratual.
     """
     face_f = float(face or 0)
     compra_f = float(compra or 0)
@@ -169,7 +171,9 @@ def vp_por_prazo(
     if venc is None or prazo_f <= 0:
         return money_half_up(compra_f)
     du_atual = _du_atual_com_prazo(data_alvo, venc, prazo_atual)
-    if du_atual <= 0:
+    if du_atual <= 0 and acumular_juros_pos_venc and data_alvo > venc:
+        du_atual = -dias_uteis_prazo(venc, data_alvo)
+    if du_atual <= 0 and not acumular_juros_pos_venc:
         return money_half_up(face_f)
     try:
         vp = face_f / ((face_f / compra_f) ** (float(du_atual) / prazo_f))
@@ -216,6 +220,7 @@ def atualizar_marcacao(
     *,
     data_ref: date,
     data_alvo: date,
+    acumular_juros_pos_venc: bool = False,
 ) -> dict[str, dict[str, Any]]:
     """
     Atualiza VP/PDD/faixa das posições abertas para data_alvo.
@@ -256,6 +261,7 @@ def atualizar_marcacao(
                 data_alvo,
                 prazo,
                 prazo_atual=pos.get("prazo_atual"),
+                acumular_juros_pos_venc=acumular_juros_pos_venc,
             )
         elif data_aq is not None:
             pos["vl_presente_adm"] = rolar_vp(

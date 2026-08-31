@@ -164,6 +164,71 @@ def ancoras_por_chamada(chamadas: list[dict[str, Any]]) -> dict[tuple[int, int],
     return out
 
 
+def _parcela_liquidada_em(
+    ordem: int,
+    ref: date,
+    venc_parcela: date,
+    *,
+    principal_amortizado: float,
+    principal_restante: float,
+) -> bool:
+    """Parcela liquidada na data ref (extrato histórico / motor passivo)."""
+    if ref < venc_parcela:
+        return False
+    if ordem == 1:
+        return principal_amortizado > 0.005
+    return principal_restante <= 0.005
+
+
+def preparar_ctx_extrato(
+    chamada: dict[str, Any],
+    classe: Classe,
+    data_base: date,
+    fatorador: FatorCDI,
+) -> dict[str, Any]:
+    """Metadados pré-calculados para extrato diário (evita montar_posicao completa)."""
+    data_aporte = date.fromisoformat(str(chamada["data_aporte"])[:10])
+    d1 = proximo_dia_util(
+        add_meses(data_base, classe.meses_primeira), fatorador.datas_set
+    )
+    d2 = proximo_dia_util(
+        add_meses(data_base, classe.meses_segunda), fatorador.datas_set
+    )
+    nominal = float(chamada["valor_nominal"])
+    principal_amortizado = float(chamada.get("principal_amortizado") or 0)
+    return {
+        "data_aporte": data_aporte,
+        "nominal": nominal,
+        "principal_amortizado": principal_amortizado,
+        "principal_restante": max(0.0, nominal - principal_amortizado),
+        "perc_cdi": classe.percentual_cdi,
+        "d1": d1,
+        "d2": d2,
+    }
+
+
+def totais_chamada_dia(
+    ctx: dict[str, Any],
+    fatorador: FatorCDI,
+    ref: date,
+) -> tuple[float, float]:
+    """(aplicado, vp_remanescente) na data ref — paridade com montar_posicao."""
+    if ref < ctx["data_aporte"]:
+        return 0.0, 0.0
+    p2_liq = _parcela_liquidada_em(
+        2,
+        ref,
+        ctx["d2"],
+        principal_amortizado=ctx["principal_amortizado"],
+        principal_restante=ctx["principal_restante"],
+    )
+    if p2_liq:
+        return ctx["nominal"], 0.0
+    fator = fatorador.fator(ctx["data_aporte"], ref, ctx["perc_cdi"])
+    vp = ctx["principal_restante"] * fator
+    return ctx["nominal"], vp
+
+
 def _fracao_primeira(chamada: dict[str, Any], classe: Classe) -> float:
     raw = chamada.get("perc_primeira")
     if raw is not None and float(raw) > 0:
@@ -252,8 +317,12 @@ def montar_posicao(
             liquidada=liquidada,
         )
 
-    p1_liq = principal_amortizado > 0.005
-    p2_liq = principal_restante <= 0.005
+    p1_liq = _parcela_liquidada_em(
+        1, hoje, d1, principal_amortizado=principal_amortizado, principal_restante=principal_restante
+    )
+    p2_liq = _parcela_liquidada_em(
+        2, hoje, d2, principal_amortizado=principal_amortizado, principal_restante=principal_restante
+    )
     p1 = parcela(
         1,
         f"1ª ({fracao_1 * 100:.1f}% face)",

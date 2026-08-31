@@ -1,4 +1,13 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import {
+  CartesianGrid,
+  ComposedChart,
+  Legend,
+  Line,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts'
 import { CalendarioDataBase } from './CalendarioDataBase'
 import type { DataBaseDetalhe } from './types'
 import { API_BASE } from './types'
@@ -114,7 +123,25 @@ type PosicaoResp = {
   por_classe: Array<{ classe: string; chamadas: ChamadaPos[] }>
 }
 
-type AbaPassivo = 'classes' | 'vencimentos' | 'cotista'
+type AbaPassivo = 'classes' | 'vencimentos' | 'cotista' | 'extrato-cotista'
+
+type ClasseCadastro = { id: number; nome: string }
+
+type PontoExtratoCotista = {
+  data: string
+  label: string
+  aplicado: number
+  vp: number
+  n_chamadas: number
+}
+
+type ExtratoCotistaResp = {
+  data_ref: string
+  inicio: string | null
+  serie: PontoExtratoCotista[]
+  kpis: { aplicado: number; vp: number; n_chamadas: number }
+  classes: ClasseCadastro[]
+}
 
 function formatarMoeda(valor: number | null | undefined): string {
   return Number(valor ?? 0).toLocaleString('pt-BR', {
@@ -174,6 +201,11 @@ function Passivo({ dataBase: dataBaseProp }: PassivoProps) {
   const [cotistas, setCotistas] = useState<CotistaLista[]>([])
   const [cotistaId, setCotistaId] = useState<number | ''>('')
   const [posicao, setPosicao] = useState<PosicaoResp | null>(null)
+  const [classesCadastro, setClassesCadastro] = useState<ClasseCadastro[]>([])
+  const [classesFiltro, setClassesFiltro] = useState<Set<number>>(new Set())
+  const [extratoCotista, setExtratoCotista] = useState<ExtratoCotistaResp | null>(null)
+  const [carregandoExtrato, setCarregandoExtrato] = useState(false)
+  const [erroExtrato, setErroExtrato] = useState<string | null>(null)
   const [aba, setAba] = useState<AbaPassivo>('classes')
   const [erro, setErro] = useState<string | null>(null)
   const [carregando, setCarregando] = useState(false)
@@ -241,12 +273,13 @@ function Passivo({ dataBase: dataBaseProp }: PassivoProps) {
       setCarregando(true)
       setErro(null)
       try {
-        const [resPassivo, resVenc, resCot] = await Promise.all([
+        const [resPassivo, resVenc, resCot, resCls] = await Promise.all([
           fetch(`${API_BASE}/fidc/passivo?dataBase=${encodeURIComponent(dataBase)}`),
           fetch(
             `${API_BASE}/fidc/passivo/vencimentos?dataBase=${encodeURIComponent(dataBase)}`,
           ),
           fetch(`${API_BASE}/fidc/passivo/cotistas`),
+          fetch(`${API_BASE}/fidc/passivo/classes`),
         ])
         if (cancelado) return
 
@@ -276,6 +309,14 @@ function Passivo({ dataBase: dataBaseProp }: PassivoProps) {
             if (atual !== '' && lista.some((c) => c.id === atual)) return atual
             return lista[0]?.id ?? ''
           })
+        }
+
+        if (resCls.ok) {
+          const jcl = await resCls.json()
+          const cls = ((jcl.classes ?? []) as Array<{ id: number; nome: string }>).map(
+            (c) => ({ id: c.id, nome: c.nome }),
+          )
+          setClassesCadastro(cls)
         }
       } catch (e) {
         if (!cancelado) {
@@ -319,6 +360,95 @@ function Passivo({ dataBase: dataBaseProp }: PassivoProps) {
       cancelado = true
     }
   }, [dataBase, cotistaId])
+
+  const classeIdsParam = useMemo(() => {
+    if (classesFiltro.size === 0 || classesFiltro.size === classesCadastro.length) {
+      return ''
+    }
+    return [...classesFiltro].join(',')
+  }, [classesFiltro, classesCadastro.length])
+
+  useEffect(() => {
+    if (!dataBase || cotistaId === '' || aba !== 'extrato-cotista') {
+      setExtratoCotista(null)
+      return
+    }
+    let cancelado = false
+    const ctrl = new AbortController()
+    const timer = window.setTimeout(() => ctrl.abort(), 120_000)
+    async function carregarExtrato() {
+      setCarregandoExtrato(true)
+      setErroExtrato(null)
+      try {
+        const qs = new URLSearchParams({
+          dataBase,
+          cotistaId: String(cotistaId),
+        })
+        if (classeIdsParam) qs.set('classeIds', classeIdsParam)
+        const res = await fetch(`${API_BASE}/fidc/passivo/extrato-cotista?${qs}`, {
+          signal: ctrl.signal,
+        })
+        if (cancelado) return
+        if (res.status === 404) {
+          setExtratoCotista(null)
+          setErroExtrato(
+            'Endpoint não encontrado no servidor — faça deploy do backend na VPS (push + setup.sh).',
+          )
+          return
+        }
+        const json = await res.json()
+        if (cancelado) return
+        if (!res.ok) {
+          setExtratoCotista(null)
+          setErroExtrato(
+            typeof json.detail === 'string' ? json.detail : 'Falha ao carregar extrato.',
+          )
+          return
+        }
+        setExtratoCotista(json as ExtratoCotistaResp)
+      } catch (e) {
+        if (cancelado) return
+        setExtratoCotista(null)
+        if (e instanceof DOMException && e.name === 'AbortError') {
+          setErroExtrato(
+            'Tempo esgotado (2 min). O servidor pode estar ocupado com a atualização da série — aguarde terminar ou use o backend local.',
+          )
+        } else {
+          setErroExtrato(e instanceof Error ? e.message : 'Erro de rede')
+        }
+      } finally {
+        window.clearTimeout(timer)
+        if (!cancelado) setCarregandoExtrato(false)
+      }
+    }
+    void carregarExtrato()
+    return () => {
+      cancelado = true
+      ctrl.abort()
+      window.clearTimeout(timer)
+    }
+  }, [dataBase, cotistaId, classeIdsParam, aba])
+
+  const graficoExtratoCotista = useMemo(() => {
+    if (!extratoCotista?.serie?.length) return []
+    const step = Math.max(1, Math.floor(extratoCotista.serie.length / 120))
+    return extratoCotista.serie.filter(
+      (_, i) => i % step === 0 || i === extratoCotista.serie.length - 1,
+    )
+  }, [extratoCotista])
+
+  function alternarClasseFiltro(id: number) {
+    setClassesFiltro((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function selecionarTodasClasses() {
+    setClassesFiltro(new Set())
+  }
 
   function selecionarData(data: string) {
     setDataBase(data)
@@ -371,6 +501,7 @@ function Passivo({ dataBase: dataBaseProp }: PassivoProps) {
             ['classes', 'Classes'],
             ['vencimentos', 'Vencimentos'],
             ['cotista', 'Posição do cotista'],
+            ['extrato-cotista', 'Extrato cotista'],
           ] as const
         ).map(([id, rotulo]) => (
           <button
@@ -694,6 +825,147 @@ function Passivo({ dataBase: dataBaseProp }: PassivoProps) {
                 <p className="vazio">Este cotista não tem chamadas abertas.</p>
               )}
             </>
+          )}
+        </section>
+      )}
+
+      {aba === 'extrato-cotista' && (
+        <section className="painel">
+          <div className="painel-cabecalho extrato-filtros">
+            <div>
+              <h2>Extrato cotista</h2>
+              {extratoCotista?.inicio && (
+                <p className="subtitulo">Desde {extratoCotista.inicio}</p>
+              )}
+            </div>
+            <label className="select-cotista">
+              Cotista
+              <select
+                value={cotistaId === '' ? '' : String(cotistaId)}
+                onChange={(e) =>
+                  setCotistaId(e.target.value ? Number(e.target.value) : '')
+                }
+              >
+                {cotistas.length === 0 && <option value="">Sem cotistas</option>}
+                {cotistas.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.nome}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          {classesCadastro.length > 0 && (
+            <div className="filtro-classes-cota">
+              <span>Tipo de cota</span>
+              <button type="button" className={classesFiltro.size === 0 ? 'ativo' : ''} onClick={selecionarTodasClasses}>
+                Todas
+              </button>
+              {classesCadastro.map((c) => (
+                <label key={c.id} className="check-classe-cota">
+                  <input
+                    type="checkbox"
+                    checked={classesFiltro.size === 0 || classesFiltro.has(c.id)}
+                    onChange={() => {
+                      if (classesFiltro.size === 0) {
+                        const todas = new Set(classesCadastro.map((x) => x.id))
+                        todas.delete(c.id)
+                        setClassesFiltro(todas)
+                      } else {
+                        alternarClasseFiltro(c.id)
+                      }
+                    }}
+                  />
+                  {c.nome}
+                </label>
+              ))}
+            </div>
+          )}
+
+          {extratoCotista?.kpis && (
+            <div className="painel-totais passivo-kpis">
+              <div className="painel-total">
+                <span>Aplicado</span>
+                <strong>{formatarMoeda(extratoCotista.kpis.aplicado)}</strong>
+              </div>
+              <div className="painel-total">
+                <span>VP</span>
+                <strong>{formatarMoeda(extratoCotista.kpis.vp)}</strong>
+              </div>
+              <div className="painel-total">
+                <span>Chamadas</span>
+                <strong>{extratoCotista.kpis.n_chamadas}</strong>
+              </div>
+            </div>
+          )}
+
+          {carregandoExtrato && <p className="vazio">Calculando extrato (motor passivo)…</p>}
+          {erroExtrato && <div className="banner-status banner-data">{erroExtrato}</div>}
+
+          {!carregandoExtrato && graficoExtratoCotista.length > 0 && (
+            <div className="chart-wrap chart-fluxo">
+              <ComposedChart data={graficoExtratoCotista} height={360}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e8edf2" />
+                <XAxis
+                  dataKey="label"
+                  tick={{ fill: '#5a6b7d', fontSize: 11 }}
+                  interval="preserveStartEnd"
+                  minTickGap={28}
+                />
+                <YAxis
+                  tick={{ fill: '#5a6b7d', fontSize: 12 }}
+                  tickFormatter={(v) =>
+                    Number(v).toLocaleString('pt-BR', {
+                      notation: 'compact',
+                      maximumFractionDigits: 1,
+                    })
+                  }
+                  width={56}
+                />
+                <Tooltip
+                  formatter={(value, name) => [
+                    formatarMoeda(Number(value ?? 0)),
+                    String(name),
+                  ]}
+                  labelFormatter={(_label, payload) => {
+                    const row = payload?.[0]?.payload as PontoExtratoCotista | undefined
+                    if (!row?.data) return ''
+                    return row.data.split('-').reverse().join('/')
+                  }}
+                  contentStyle={{
+                    background: '#0f2740',
+                    border: 'none',
+                    borderRadius: 8,
+                    color: '#fff',
+                  }}
+                />
+                <Legend />
+                <Line
+                  type="monotone"
+                  dataKey="vp"
+                  name="VP remanescente"
+                  stroke="#1f6f8b"
+                  strokeWidth={2}
+                  dot={false}
+                  isAnimationActive={false}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="aplicado"
+                  name="Aplicado"
+                  stroke="#64748b"
+                  strokeWidth={1.5}
+                  strokeDasharray="4 4"
+                  dot={false}
+                  isAnimationActive={false}
+                />
+              </ComposedChart>
+            </div>
+          )}
+
+          {!carregandoExtrato && extratoCotista && extratoCotista.serie.length === 0 && (
+            <p className="vazio">Sem chamadas para os filtros selecionados.</p>
           )}
         </section>
       )}

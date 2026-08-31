@@ -83,12 +83,40 @@ def _carregar_estado_disco() -> dict[str, Any] | None:
     return None
 
 
+def _job_expirado(estado: dict[str, Any]) -> bool:
+    """Job running há mais de 45 min — provável travamento na série."""
+    if estado.get("status") != "running":
+        return False
+    ini = estado.get("iniciado_em")
+    if not ini:
+        return False
+    try:
+        started = datetime.fromisoformat(str(ini).replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return (datetime.now(timezone.utc) - started).total_seconds() > 45 * 60
+
+
 def status_job() -> dict[str, Any]:
     with _lock:
         disco = _carregar_estado_disco()
         if disco is not None:
-            # Disco é a fonte entre processos; memória local só acelera o worker do job.
-            if disco.get("status") == "running" or _estado.get("status") != "running":
+            if _job_expirado(disco):
+                disco = {
+                    **disco,
+                    "status": "erro",
+                    "terminado_em": _agora_iso(),
+                    "erro": (
+                        "Atualização expirou após 45 min (provável travamento na "
+                        "série). Tente novamente; use o backend local para rebuild "
+                        "completo se persistir."
+                    ),
+                }
+                _estado.clear()
+                _estado.update(_estado_padrao())
+                _estado.update(disco)
+                _persistir_estado_unlocked()
+            elif disco.get("status") == "running" or _estado.get("status") != "running":
                 _estado.clear()
                 _estado.update(_estado_padrao())
                 _estado.update(disco)
@@ -308,7 +336,11 @@ def _etapa_pdfs_sub(fim: date) -> dict[str, Any]:
 
 def _etapa_serie() -> dict[str, Any]:
     from atualizacoes import _parse_iso, _ultima_data_liquidez
-    from carteira_movimentacoes import mapa_dc_bdr_diario, reconstruir_serie_diaria
+    from carteira_movimentacoes import (
+        DATA_MINIMA,
+        mapa_dc_bdr_diario,
+        reconstruir_serie_diaria,
+    )
 
     serie = mapa_dc_bdr_diario()
     datas_serie = [_parse_iso(k) for k in serie]
@@ -342,12 +374,28 @@ def _etapa_serie() -> dict[str, Any]:
             {"fase": fase, **{k: info.get(k) for k in info}},
         )
 
+    # Série existente: atualização incremental (só remarca a partir de `desde`).
+    if len(serie) > 0 and ultima_serie is not None:
+        from atualizar_serie_desde import atualizar_desde
+
+        desde = max(DATA_MINIMA, ultima_serie - timedelta(days=14))
+        payload = atualizar_desde(desde, progresso=progresso)
+        por_dia = (payload.get("por_dia") or {}) if isinstance(payload, dict) else {}
+        return {
+            "dias": len(por_dia),
+            "ultima": max(por_dia.keys()) if por_dia else None,
+            "pulado": False,
+            "modo": "incremental",
+            "desde": desde.isoformat(),
+        }
+
     payload = reconstruir_serie_diaria(progresso=progresso)
     por_dia = (payload.get("por_dia") or {}) if isinstance(payload, dict) else {}
     return {
         "dias": len(por_dia),
         "ultima": max(por_dia.keys()) if por_dia else None,
         "pulado": False,
+        "modo": "completo",
     }
 
 
@@ -451,6 +499,26 @@ def rodar_atualizacao() -> None:
             erro=str(exc),
             traceback=traceback.format_exc(),
         )
+
+
+def cancelar_job() -> dict[str, Any]:
+    """Encerra job preso em running (libera CPU para extratos)."""
+    with _lock:
+        atual = _carregar_estado_disco() or dict(_estado)
+        if atual.get("status") != "running":
+            return {"ok": False, "motivo": "Nenhuma atualização em andamento.", **status_job()}
+        _estado.clear()
+        _estado.update(_estado_padrao())
+        _estado.update(
+            {
+                **atual,
+                "status": "erro",
+                "terminado_em": _agora_iso(),
+                "erro": "Atualização cancelada manualmente.",
+            }
+        )
+        _persistir_estado_unlocked()
+    return {"ok": True, **status_job()}
 
 
 def iniciar_atualizacao() -> dict[str, Any]:

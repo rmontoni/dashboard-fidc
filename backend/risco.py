@@ -785,12 +785,10 @@ def calcular_risco_fidc(data_base_filtro: str) -> dict:
         .sum()
     )
     sacados_all["vol_atraso"] = sacados_all["sacado"].map(atraso_por_sacado).fillna(0.0)
-    sacados_all["pd_estimada"] = sacados_all.apply(
-        lambda r: (float(r["vol_atraso"]) / float(r["valor_face"]) * 100 * 0.8)
-        if float(r["valor_face"]) > 0
-        else 0.0,
-        axis=1,
-    )
+    from pd_estimada import pd_por_sacado as _pd_sacado_map
+
+    pd_map_sac = _pd_sacado_map(df_atual, data_alvo.date())
+    sacados_all["pd_estimada"] = sacados_all["sacado"].map(pd_map_sac).fillna(0.0)
     sacados_all["perc_recompra"] = sacados_all["sacado"].map(
         pct_status_descontado(df_atual, "sacado", "RECOMPRADO")
     )
@@ -858,10 +856,12 @@ def calcular_risco_fidc(data_base_filtro: str) -> dict:
         tipos_pizza, "tipo_recebivel", top_n=max(len(tipos_pizza), 1)
     )
 
-    # 5. Fluxo de caixa projetado (mensal) com PD por sacado — só A VENCER
-    pd_por_sacado = sacados_all.set_index("sacado")["pd_estimada"]
+    # 5. Fluxo de caixa projetado (mensal) com PD por título — só A VENCER
+    from pd_estimada import pd_por_titulo
+
     df_fluxo = df_atual.loc[df_atual["status"] == "A VENCER"].copy()
-    df_fluxo["pd"] = df_fluxo["sacado"].map(pd_por_sacado).fillna(0.0)
+    pd_full = pd_por_titulo(df_atual, data_alvo.date())
+    df_fluxo["pd"] = pd_full.loc[df_fluxo.index].values
     df_fluxo["fator_esperanca"] = (1 - df_fluxo["pd"] / 100.0).clip(lower=0.0)
     df_fluxo["fluxo_caixa"] = df_fluxo["valor_face"] * df_fluxo["fator_esperanca"]
     df_fluxo["receita_esperada"] = (

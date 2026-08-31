@@ -3,11 +3,20 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 
+from calendario import e_dia_util
 from passivo_cadastro import listar_chamadas, listar_classes, listar_cotistas, obter_cotista
-from passivo_calc import montar_todas_posicoes, posicao_to_dict
+from passivo_calc import (
+    _classe_from_row,
+    ancoras_por_chamada,
+    carregar_fatorador,
+    montar_todas_posicoes,
+    posicao_to_dict,
+    preparar_ctx_extrato,
+    totais_chamada_dia,
+)
 
 
 def _parse_data_base(texto: str) -> date:
@@ -230,6 +239,124 @@ def montar_posicao_cotista(id_cotista: int, data_base: str | None = None) -> dic
     }
 
 
+def _label_dia_extrato(d: date, ref: date) -> str:
+    fmt = "%d/%m" if d.year == ref.year else "%d/%m/%y"
+    return d.strftime(fmt)
+
+
+def montar_extrato_cotista(
+    cotista_id: int,
+    data_base: str | None = None,
+    *,
+    classe_ids: list[int] | None = None,
+) -> dict[str, Any]:
+    """Evolução diária da posição do cotista (motor passivo / CDI)."""
+    cotista = obter_cotista(cotista_id)
+    if not cotista:
+        raise ValueError(f"Cotista {cotista_id} não encontrado")
+
+    fim = _parse_data_base(data_base) if data_base else date.today()
+    classes = listar_classes(apenas_ativos=True)
+    chamadas = listar_chamadas(cotista_id=cotista_id)
+
+    ids_filtro = set(classe_ids or [])
+    if ids_filtro:
+        chamadas = [c for c in chamadas if int(c["classe_id"]) in ids_filtro]
+        classes = [c for c in classes if int(c["id"]) in ids_filtro]
+
+    if not chamadas:
+        return {
+            "data_ref": _br(fim),
+            "data_ref_iso": fim.isoformat(),
+            "cotista": cotista,
+            "classes": [
+                {"id": int(c["id"]), "nome": c["nome"]} for c in listar_classes(apenas_ativos=True)
+            ],
+            "classe_ids": sorted(ids_filtro) if ids_filtro else [],
+            "inicio": None,
+            "inicio_iso": None,
+            "serie": [],
+            "kpis": {"aplicado": 0.0, "vp": 0.0},
+        }
+
+    mapa_cls = {int(r["id"]): _classe_from_row(r) for r in classes}
+    ancoras = ancoras_por_chamada(chamadas)
+    fatorador = carregar_fatorador(fim)
+
+    ctxs: list[dict[str, Any]] = []
+    for ch in chamadas:
+        classe = mapa_cls.get(int(ch["classe_id"]))
+        if not classe:
+            continue
+        data_base_ch = ancoras[(int(ch["classe_id"]), int(ch["numero"]))]
+        ctxs.append(preparar_ctx_extrato(ch, classe, data_base_ch, fatorador))
+
+    if not ctxs:
+        return {
+            "data_ref": _br(fim),
+            "data_ref_iso": fim.isoformat(),
+            "cotista": cotista,
+            "classes": [
+                {"id": int(c["id"]), "nome": c["nome"]}
+                for c in listar_classes(apenas_ativos=True)
+            ],
+            "classe_ids": sorted(ids_filtro) if ids_filtro else [],
+            "inicio": None,
+            "inicio_iso": None,
+            "serie": [],
+            "kpis": {"aplicado": 0.0, "vp": 0.0, "n_chamadas": 0},
+        }
+
+    inicio = min(c["data_aporte"] for c in ctxs)
+
+    serie: list[dict[str, Any]] = []
+    d = inicio
+    while d <= fim:
+        if not e_dia_util(d):
+            d += timedelta(days=1)
+            continue
+        aplicado = 0.0
+        vp = 0.0
+        n_chamadas = 0
+        for ctx in ctxs:
+            ap, vp_ch = totais_chamada_dia(ctx, fatorador, d)
+            if ap <= 0:
+                continue
+            aplicado += ap
+            vp += vp_ch
+            n_chamadas += 1
+        serie.append(
+            {
+                "data": d.isoformat(),
+                "label": _label_dia_extrato(d, fim),
+                "aplicado": round(aplicado, 2),
+                "vp": round(vp, 2),
+                "n_chamadas": n_chamadas,
+            }
+        )
+        d += timedelta(days=1)
+
+    ultimo = serie[-1] if serie else {"aplicado": 0.0, "vp": 0.0}
+    return {
+        "data_ref": _br(fim),
+        "data_ref_iso": fim.isoformat(),
+        "cotista": cotista,
+        "classes": [
+            {"id": int(c["id"]), "nome": c["nome"]}
+            for c in listar_classes(apenas_ativos=True)
+        ],
+        "classe_ids": sorted(ids_filtro) if ids_filtro else [],
+        "inicio": _br(inicio),
+        "inicio_iso": inicio.isoformat(),
+        "serie": serie,
+        "kpis": {
+            "aplicado": ultimo["aplicado"],
+            "vp": ultimo["vp"],
+            "n_chamadas": ultimo.get("n_chamadas", 0),
+        },
+    }
+
+
 def vp_por_id_carteira(data_base: str | None = None) -> dict[int, float]:
     """id_carteira IDSF → VP remanescente (motor passivo / Alpha)."""
     hoje = _parse_data_base(data_base) if data_base else date.today()
@@ -338,30 +465,13 @@ def _mapa_liquidez_valores() -> dict[str, float]:
     return out
 
 
-def _pd_por_sacado(df) -> dict[str, float]:
-    """PD estimada = (face em atraso / face total do sacado) × 80%, como no Dashboard."""
-    if df is None or df.empty or "sacado" not in df.columns:
-        return {}
-    status = df["status"].astype(str).str.upper()
-    atrasado = status.isin(["VENCIDO", "ATRASO"])
-    if "dias_atraso_calc" in df.columns:
-        atrasado = atrasado | (df["dias_atraso_calc"].fillna(0) > 0)
-    tot = df.groupby("sacado")["valor_face"].sum()
-    atr = (
-        df.loc[atrasado]
-        .groupby("sacado")["valor_face"]
-        .sum()
-        .reindex(tot.index)
-        .fillna(0.0)
-    )
-    out: dict[str, float] = {}
-    for sac, face_tot in tot.items():
-        ft = float(face_tot)
-        if ft <= 0:
-            out[str(sac)] = 0.0
-        else:
-            out[str(sac)] = float(atr.get(sac, 0.0)) / ft * 100.0 * 0.8
-    return out
+def _pd_por_sacado(df, data_base=None) -> dict[str, float]:
+    """PD estimada (consignado + redutor calibrado) — ver pd_estimada.py."""
+    from pd_estimada import pd_por_sacado
+
+    if data_base is None and df is not None and not df.empty and "data_base" in df.columns:
+        data_base = df["data_base"].iloc[0]
+    return pd_por_sacado(df, data_base)
 
 
 def _to_date(venc: Any) -> date | None:
@@ -376,12 +486,27 @@ def _to_date(venc: Any) -> date | None:
     return None
 
 
-def montar_fluxo_passivo_caixa(data_base: str | None = None) -> dict[str, Any]:
-    """Caixa mês a mês a partir da data base: real até a última liquidez, depois projetado.
+def _dias_entre(inicio: date, fim: date) -> list[date]:
+    out: list[date] = []
+    d = inicio
+    while d <= fim:
+        out.append(d)
+        d += timedelta(days=1)
+    return out
 
-    - Histórico: CC + aplicações observados (último dia de cada mês ≥ data base).
-    - Projeção: a partir do dia seguinte à última liquidez — liquidações a vencer
-      com haircut de PD − amortizações de cotas mezanino.
+
+def _label_dia(d: date, ref: date, projetado: bool = False) -> str:
+    fmt = "%d/%m" if d.year == ref.year else "%d/%m/%y"
+    base = d.strftime(fmt)
+    return f"{base}*" if projetado else base
+
+
+def montar_fluxo_passivo_caixa(data_base: str | None = None) -> dict[str, Any]:
+    """Caixa dia a dia a partir da data base: real até a última liquidez, depois projetado.
+
+    - Histórico: CC + aplicações observados em cada dia com liquidez ≥ data base.
+    - Projeção: liquidações a vencer (face × (1−PD)) e amortizações de cotas na data
+      de vencimento, acumulando o caixa dia a dia.
     """
     hoje = _parse_data_base(data_base) if data_base else date.today()
     ref, posicoes = _carregar_posicoes(hoje)
@@ -390,22 +515,6 @@ def montar_fluxo_passivo_caixa(data_base: str | None = None) -> dict[str, Any]:
     dias_liq = sorted(liq_mapa)
     ultima_liq: date | None = date.fromisoformat(dias_liq[-1]) if dias_liq else None
 
-    # --- trecho real (mês a mês da data base até a última liquidez) ---
-    serie: list[dict[str, Any]] = []
-    reais_por_mes: dict[str, tuple[str, float]] = {}
-    for d_iso in dias_liq:
-        d = date.fromisoformat(d_iso)
-        if d < ref:
-            continue
-        if ultima_liq and d > ultima_liq:
-            continue
-        mes = d.strftime("%Y-%m")
-        prev = reais_por_mes.get(mes)
-        if prev is None or d_iso >= prev[0]:
-            reais_por_mes[mes] = (d_iso, liq_mapa[d_iso])
-
-    # ponto inicial na data base (último dia com liquidez ≤ ref; se a base
-    # for anterior a qualquer liquidez, usa a primeira ≥ ref)
     caixa_inicial = 0.0
     data_inicial_iso = ref.isoformat()
     if dias_liq:
@@ -417,95 +526,70 @@ def montar_fluxo_passivo_caixa(data_base: str | None = None) -> dict[str, Any]:
             data_inicial_iso = apos[0] if apos else dias_liq[-1]
         caixa_inicial = liq_mapa[data_inicial_iso]
 
-    mes_ref = ref.strftime("%Y-%m")
-    # Fim do histórico real: última liquidez, mas não antes da data base
-    if ultima_liq and ultima_liq >= ref:
-        mes_ultima = ultima_liq.strftime("%Y-%m")
-    else:
-        mes_ultima = mes_ref
+    serie: list[dict[str, Any]] = []
+    vistos: set[str] = set()
 
-    def _label_ponto(mes: str, data_iso: str | None, tipo: str, ponto: str) -> str:
-        if ponto == "inicial" and data_iso:
-            d = date.fromisoformat(data_iso)
-            return d.strftime("%d/%m")
-        base = _label_mes(mes)
-        if tipo == "projetado":
-            return f"{base}*"
-        return base
-
-    # Garante o mês da data base com o valor na data base (não só o fim do mês)
-    serie.append(
-        {
-            "mes": mes_ref,
-            "mes_ano": ref.strftime("%d/%m"),
-            "data": data_inicial_iso,
-            "entradas_ativos": 0.0,
-            "entradas_brutas": 0.0,
-            "saidas_passivo": 0.0,
-            "liquido": 0.0,
-            "caixa": round(caixa_inicial, 2),
-            "tipo": "real",
-            "ponto": "inicial",
-        }
-    )
-
-    for mes in _meses_entre(mes_ref, mes_ultima):
-        if mes == mes_ref:
-            item = reais_por_mes.get(mes)
-            if (
-                item
-                and item[0] > data_inicial_iso
-                and round(item[1], 2) != round(caixa_inicial, 2)
-            ):
-                serie.append(
-                    {
-                        "mes": mes,
-                        "mes_ano": _label_ponto(mes, item[0], "real", "mes"),
-                        "data": item[0],
-                        "entradas_ativos": 0.0,
-                        "entradas_brutas": 0.0,
-                        "saidas_passivo": 0.0,
-                        "liquido": 0.0,
-                        "caixa": round(item[1], 2),
-                        "tipo": "real",
-                        "ponto": "mes",
-                    }
-                )
-            continue
-        item = reais_por_mes.get(mes)
-        if not item:
-            continue
+    def _append(
+        d: date,
+        caixa: float,
+        *,
+        tipo: str,
+        ent: float = 0.0,
+        ent_b: float = 0.0,
+        sai: float = 0.0,
+        ponto: str = "dia",
+    ) -> None:
+        iso = d.isoformat()
+        if iso in vistos:
+            return
+        vistos.add(iso)
+        liq = round(ent - sai, 2)
         serie.append(
             {
-                "mes": mes,
-                "mes_ano": _label_ponto(mes, item[0], "real", "mes"),
-                "data": item[0],
-                "entradas_ativos": 0.0,
-                "entradas_brutas": 0.0,
-                "saidas_passivo": 0.0,
-                "liquido": 0.0,
-                "caixa": round(item[1], 2),
-                "tipo": "real",
-                "ponto": "mes",
+                "mes": d.strftime("%Y-%m"),
+                "mes_ano": _label_dia(d, ref, projetado=(tipo == "projetado")),
+                "data": iso,
+                "entradas_ativos": round(ent, 2),
+                "entradas_brutas": round(ent_b, 2),
+                "saidas_passivo": round(sai, 2),
+                "liquido": liq,
+                "caixa": round(caixa, 2),
+                "tipo": tipo,
+                "ponto": ponto,
             }
         )
 
-    # --- projeção após o fim do histórico real ---
-    # Projeta fluxos com vencimento depois da última liquidez (≥ data base).
-    # Se não houver liquidez ≥ data base, corta na própria data base.
+    # Ponto na data base (caixa observado)
+    _append(
+        ref,
+        caixa_inicial,
+        tipo="real",
+        ponto="inicial",
+    )
+
+    # Histórico real: um ponto por dia com liquidez observada
+    if ultima_liq and ultima_liq >= ref:
+        fim_real = ultima_liq
+    else:
+        fim_real = ref
+    for d_iso in dias_liq:
+        d = date.fromisoformat(d_iso)
+        if d < ref or d > fim_real or d_iso == ref.isoformat():
+            continue
+        _append(d, liq_mapa[d_iso], tipo="real")
+
+    # Projeção a partir do dia seguinte ao fim do histórico real
     if ultima_liq and ultima_liq >= ref:
         corte = ultima_liq
     else:
         corte = ref
+
     saidas: dict[str, float] = defaultdict(float)
     for p in posicoes:
         for parc in p.parcelas:
-            if parc.liquidada:
+            if parc.liquidada or parc.data_vencimento <= corte:
                 continue
-            if parc.data_vencimento <= corte:
-                continue
-            mes = parc.data_vencimento.strftime("%Y-%m")
-            saidas[mes] += parc.valor_na_liquidacao
+            saidas[parc.data_vencimento.isoformat()] += parc.valor_na_liquidacao
 
     entradas: dict[str, float] = defaultdict(float)
     entradas_brutas: dict[str, float] = defaultdict(float)
@@ -514,53 +598,50 @@ def montar_fluxo_passivo_caixa(data_base: str | None = None) -> dict[str, Any]:
 
         df = carregar_carteira_movimentacoes(ref.strftime("%d/%m/%Y"))
         if df is not None and not df.empty:
-            pd_map = _pd_por_sacado(df)
-            ativos = df[df["status"].astype(str).str.upper() == "A VENCER"].copy()
+            from pd_estimada import pd_por_titulo
+
+            df = df.copy()
+            df["_pd_pct"] = pd_por_titulo(df, ref).values
+            ativos = df[df["status"].astype(str).str.upper() == "A VENCER"]
             for _, row in ativos.iterrows():
                 d = _to_date(row.get("data_vencimento"))
                 if d is None or d <= corte:
                     continue
-                mes = d.strftime("%Y-%m")
+                iso = d.isoformat()
                 face = float(row.get("valor_face") or 0)
                 if face <= 0:
                     continue
-                pd_pct = float(pd_map.get(str(row.get("sacado") or ""), 0.0))
+                pd_pct = float(row.get("_pd_pct") or 0.0)
                 fator = max(0.0, 1.0 - pd_pct / 100.0)
-                entradas_brutas[mes] += face
-                entradas[mes] += face * fator
+                entradas_brutas[iso] += face
+                entradas[iso] += face * fator
     except Exception:  # noqa: BLE001
         pass
 
-    meses_proj = sorted(set(saidas) | set(entradas))
-    caixa = float(serie[-1]["caixa"]) if serie else caixa_inicial
-    if meses_proj:
-        for mes in _meses_entre(meses_proj[0], meses_proj[-1]):
-            # não projetar meses que já têm ponto real (exceto se for o mês do corte
-            # e ainda há fluxos após o corte — aí o ponto projetado é o fim do mês)
-            ent = round(entradas.get(mes, 0.0), 2)
-            ent_b = round(entradas_brutas.get(mes, 0.0), 2)
-            sai = round(saidas.get(mes, 0.0), 2)
-            if ent == 0 and sai == 0:
-                continue
-            liq = round(ent - sai, 2)
-            caixa = round(caixa + liq, 2)
-            serie.append(
-                {
-                    "mes": mes,
-                    "mes_ano": _label_ponto(mes, None, "projetado", "mes"),
-                    "data": None,
-                    "entradas_ativos": ent,
-                    "entradas_brutas": ent_b,
-                    "saidas_passivo": sai,
-                    "liquido": liq,
-                    "caixa": caixa,
-                    "tipo": "projetado",
-                    "ponto": "mes",
-                }
+    dias_fluxo = sorted(set(saidas) | set(entradas))
+    if dias_fluxo:
+        caixa = float(serie[-1]["caixa"]) if serie else caixa_inicial
+        inicio_proj = corte + timedelta(days=1)
+        fim_proj = date.fromisoformat(dias_fluxo[-1])
+        for d in _dias_entre(inicio_proj, fim_proj):
+            iso = d.isoformat()
+            ent = float(entradas.get(iso, 0.0))
+            ent_b = float(entradas_brutas.get(iso, 0.0))
+            sai = float(saidas.get(iso, 0.0))
+            caixa = round(caixa + ent - sai, 2)
+            _append(
+                d,
+                caixa,
+                tipo="projetado",
+                ent=ent,
+                ent_b=ent_b,
+                sai=sai,
             )
 
     tot_ent = round(sum(p["entradas_ativos"] for p in serie if p["tipo"] == "projetado"), 2)
-    tot_ent_b = round(sum(p.get("entradas_brutas") or 0 for p in serie if p["tipo"] == "projetado"), 2)
+    tot_ent_b = round(
+        sum(p.get("entradas_brutas") or 0 for p in serie if p["tipo"] == "projetado"), 2
+    )
     tot_sai = round(sum(p["saidas_passivo"] for p in serie if p["tipo"] == "projetado"), 2)
 
     return {
