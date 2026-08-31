@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
+  Bar,
   CartesianGrid,
   ComposedChart,
   Legend,
@@ -130,16 +131,27 @@ type ClasseCadastro = { id: number; nome: string }
 type PontoExtratoCotista = {
   data: string
   label: string
-  aplicado: number
+  saldo: number
   vp: number
+  aporte: number
+  amortizacao: number
+  juros: number
   n_chamadas: number
+  /** @deprecated use saldo */
+  aplicado?: number
 }
 
 type ExtratoCotistaResp = {
   data_ref: string
   inicio: string | null
   serie: PontoExtratoCotista[]
-  kpis: { aplicado: number; vp: number; n_chamadas: number }
+  kpis: {
+    saldo: number
+    vp: number
+    total_aportado: number
+    n_chamadas: number
+    aplicado?: number
+  }
   classes: ClasseCadastro[]
 }
 
@@ -437,10 +449,18 @@ function Passivo({ dataBase: dataBaseProp }: PassivoProps) {
 
   const graficoExtratoCotista = useMemo(() => {
     if (!extratoCotista?.serie?.length) return []
-    const step = Math.max(1, Math.floor(extratoCotista.serie.length / 120))
-    return extratoCotista.serie.filter(
+    const comMovimento = extratoCotista.serie.filter(
+      (p) => p.aporte > 0 || p.amortizacao > 0 || p.juros > 0,
+    )
+    const step = Math.max(1, Math.floor(extratoCotista.serie.length / 100))
+    const amostra = extratoCotista.serie.filter(
       (_, i) => i % step === 0 || i === extratoCotista.serie.length - 1,
     )
+    const datasAmostra = new Set(amostra.map((p) => p.data))
+    for (const p of comMovimento) {
+      datasAmostra.add(p.data)
+    }
+    return extratoCotista.serie.filter((p) => datasAmostra.has(p.data))
   }, [extratoCotista])
 
   function alternarClasseFiltro(id: number) {
@@ -892,12 +912,16 @@ function Passivo({ dataBase: dataBaseProp }: PassivoProps) {
           {extratoCotista?.kpis && (
             <div className="painel-totais passivo-kpis">
               <div className="painel-total">
-                <span>Aplicado</span>
-                <strong>{formatarMoeda(extratoCotista.kpis.aplicado)}</strong>
+                <span>Saldo principal</span>
+                <strong>{formatarMoeda(extratoCotista.kpis.saldo ?? extratoCotista.kpis.aplicado)}</strong>
               </div>
               <div className="painel-total">
-                <span>VP</span>
+                <span>VP (bruto)</span>
                 <strong>{formatarMoeda(extratoCotista.kpis.vp)}</strong>
+              </div>
+              <div className="painel-total">
+                <span>Total aportado</span>
+                <strong>{formatarMoeda(extratoCotista.kpis.total_aportado ?? 0)}</strong>
               </div>
               <div className="painel-total">
                 <span>Chamadas</span>
@@ -955,10 +979,26 @@ function Passivo({ dataBase: dataBaseProp }: PassivoProps) {
                   }}
                 />
                 <Legend />
+                <Bar
+                  dataKey="aporte"
+                  name="Aporte"
+                  fill="#2d8a6e"
+                  radius={[2, 2, 0, 0]}
+                  barSize={6}
+                  isAnimationActive={false}
+                />
+                <Bar
+                  dataKey="amortizacao"
+                  name="Amortização"
+                  fill="#9e2a2b"
+                  radius={[2, 2, 0, 0]}
+                  barSize={6}
+                  isAnimationActive={false}
+                />
                 <Line
                   type="monotone"
                   dataKey="vp"
-                  name="VP remanescente"
+                  name="VP (bruto)"
                   stroke="#1f6f8b"
                   strokeWidth={2}
                   dot={false}
@@ -966,8 +1006,8 @@ function Passivo({ dataBase: dataBaseProp }: PassivoProps) {
                 />
                 <Line
                   type="monotone"
-                  dataKey="aplicado"
-                  name="Aplicado"
+                  dataKey="saldo"
+                  name="Saldo principal"
                   stroke="#64748b"
                   strokeWidth={1.5}
                   strokeDasharray="4 4"
@@ -983,18 +1023,33 @@ function Passivo({ dataBase: dataBaseProp }: PassivoProps) {
                     <thead>
                       <tr>
                         <th>Data</th>
-                        <th>Aplicado</th>
-                        <th>VP remanescente</th>
-                        <th>Chamadas</th>
+                        <th>Saldo principal</th>
+                        <th>VP (bruto)</th>
+                        <th>Aporte</th>
+                        <th>Amortização</th>
+                        <th>Juros</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {[...extratoCotista.serie].reverse().map((row) => (
+                      {[...extratoCotista.serie]
+                        .reverse()
+                        .filter(
+                          (row, i, arr) =>
+                            i === 0 ||
+                            row.saldo !== arr[i - 1]?.saldo ||
+                            row.vp !== arr[i - 1]?.vp ||
+                            row.aporte > 0 ||
+                            row.amortizacao > 0 ||
+                            row.juros > 0,
+                        )
+                        .map((row) => (
                         <tr key={row.data}>
                           <td>{row.data.split('-').reverse().join('/')}</td>
-                          <td>{formatarMoeda(row.aplicado)}</td>
+                          <td>{formatarMoeda(row.saldo)}</td>
                           <td>{formatarMoeda(row.vp)}</td>
-                          <td>{row.n_chamadas}</td>
+                          <td>{row.aporte > 0 ? formatarMoeda(row.aporte) : '—'}</td>
+                          <td>{row.amortizacao > 0 ? formatarMoeda(row.amortizacao) : '—'}</td>
+                          <td>{row.juros > 0 ? formatarMoeda(row.juros) : '—'}</td>
                         </tr>
                       ))}
                     </tbody>

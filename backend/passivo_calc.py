@@ -180,6 +180,31 @@ def _parcela_liquidada_em(
     return principal_restante <= 0.005
 
 
+def _principais_parcelas(
+    chamada: dict[str, Any],
+    classe: Classe,
+    nominal: float,
+    principal_amortizado: float,
+) -> tuple[float, float, float]:
+    """(fracao_1, principal_1, principal_2) — paridade com montar_posicao."""
+    fracao_1 = _fracao_primeira(chamada, classe)
+    raw_perc = chamada.get("perc_primeira")
+    if principal_amortizado > 0.005 or (
+        raw_perc is not None and float(raw_perc or 0) > 0
+    ):
+        if raw_perc is not None and float(raw_perc) > 0:
+            fracao_1 = min(1.0, float(raw_perc) / 100.0)
+            principal_1 = nominal * fracao_1
+        else:
+            principal_1 = min(principal_amortizado, nominal)
+            fracao_1 = principal_1 / nominal if nominal else 0.0
+        principal_2 = max(0.0, nominal - principal_1)
+    else:
+        principal_1 = nominal * fracao_1
+        principal_2 = nominal * max(0.0, 1.0 - fracao_1)
+    return fracao_1, principal_1, principal_2
+
+
 def preparar_ctx_extrato(
     chamada: dict[str, Any],
     classe: Classe,
@@ -196,14 +221,99 @@ def preparar_ctx_extrato(
     )
     nominal = float(chamada["valor_nominal"])
     principal_amortizado = float(chamada.get("principal_amortizado") or 0)
+    fracao_1, principal_1, principal_2 = _principais_parcelas(
+        chamada, classe, nominal, principal_amortizado
+    )
     return {
         "data_aporte": data_aporte,
         "nominal": nominal,
         "principal_amortizado": principal_amortizado,
         "principal_restante": max(0.0, nominal - principal_amortizado),
+        "valor_amortizado_bruto": float(chamada.get("valor_amortizado_bruto") or 0),
+        "credito_vp": float(chamada.get("credito_vp") or 0),
+        "fracao_1": fracao_1,
+        "principal_1": principal_1,
+        "principal_2": principal_2,
         "perc_cdi": classe.percentual_cdi,
         "d1": d1,
         "d2": d2,
+    }
+
+
+def _liquidacao_historica(
+    ctx: dict[str, Any],
+    ref: date,
+) -> tuple[bool, bool]:
+    """Parcelas liquidadas na data ref (estado conhecido no cadastro, não o saldo atual)."""
+    if ref < ctx["data_aporte"]:
+        return False, False
+    p1_pago = ref >= ctx["d1"] and ctx["principal_amortizado"] > 0.005
+    p2_pago = ref >= ctx["d2"] and ctx["principal_restante"] <= 0.005
+    return p1_pago, p2_pago
+
+
+def extrato_chamada_dia(
+    ctx: dict[str, Any],
+    fatorador: FatorCDI,
+    ref: date,
+) -> dict[str, float]:
+    """Saldo, VP e movimentos do dia (layout Britech: aporte / amort / juros)."""
+    vazio = {
+        "saldo": 0.0,
+        "vp": 0.0,
+        "aporte": 0.0,
+        "amortizacao": 0.0,
+        "juros": 0.0,
+    }
+    if ref < ctx["data_aporte"]:
+        return vazio
+
+    p1_pago, p2_pago = _liquidacao_historica(ctx, ref)
+    nominal = ctx["nominal"]
+    principal_1 = ctx["principal_1"]
+    principal_2 = ctx["principal_2"]
+    perc_cdi = ctx["perc_cdi"]
+    data_aporte = ctx["data_aporte"]
+
+    if p2_pago:
+        saldo, vp = 0.0, 0.0
+    elif p1_pago:
+        saldo = ctx["principal_restante"]
+        fator = fatorador.fator(data_aporte, ref, perc_cdi)
+        vp = saldo * fator
+    else:
+        saldo = nominal
+        fator = fatorador.fator(data_aporte, ref, perc_cdi)
+        vp = nominal * fator
+
+    aporte = nominal if ref == data_aporte else 0.0
+    amortizacao = 0.0
+    juros = 0.0
+
+    if ref == ctx["d1"] and p1_pago and principal_1 > 0.005:
+        amortizacao = principal_1
+        bruto_db = float(ctx.get("valor_amortizado_bruto") or 0)
+        if bruto_db > amortizacao + 0.005:
+            juros = max(0.0, bruto_db - amortizacao)
+        else:
+            f_pag = fatorador.fator(data_aporte, ctx["d1"], perc_cdi)
+            juros = max(0.0, principal_1 * f_pag - principal_1)
+
+    if ref == ctx["d2"] and p2_pago and principal_2 > 0.005:
+        amortizacao = principal_2
+        f_pag = fatorador.fator(data_aporte, ctx["d2"], perc_cdi)
+        total = principal_2 * f_pag
+        credito = float(ctx.get("credito_vp") or 0)
+        if credito > 0:
+            total = max(0.0, total - credito)
+        juros = max(0.0, total - amortizacao)
+
+    return {
+        "saldo": round(saldo, 2),
+        "vp": round(vp, 2),
+        "aporte": round(aporte, 2),
+        "amortizacao": round(amortizacao, 2),
+        "juros": round(juros, 2),
     }
 
 
@@ -212,21 +322,9 @@ def totais_chamada_dia(
     fatorador: FatorCDI,
     ref: date,
 ) -> tuple[float, float]:
-    """(aplicado, vp_remanescente) na data ref — paridade com montar_posicao."""
-    if ref < ctx["data_aporte"]:
-        return 0.0, 0.0
-    p2_liq = _parcela_liquidada_em(
-        2,
-        ref,
-        ctx["d2"],
-        principal_amortizado=ctx["principal_amortizado"],
-        principal_restante=ctx["principal_restante"],
-    )
-    if p2_liq:
-        return ctx["nominal"], 0.0
-    fator = fatorador.fator(ctx["data_aporte"], ref, ctx["perc_cdi"])
-    vp = ctx["principal_restante"] * fator
-    return ctx["nominal"], vp
+    """(saldo principal, vp_remanescente) na data ref — paridade com montar_posicao."""
+    dia = extrato_chamada_dia(ctx, fatorador, ref)
+    return dia["saldo"], dia["vp"]
 
 
 def _fracao_primeira(chamada: dict[str, Any], classe: Classe) -> float:

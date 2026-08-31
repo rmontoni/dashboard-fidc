@@ -12,10 +12,10 @@ from passivo_calc import (
     _classe_from_row,
     ancoras_por_chamada,
     carregar_fatorador,
+    extrato_chamada_dia,
     montar_todas_posicoes,
     posicao_to_dict,
     preparar_ctx_extrato,
-    totais_chamada_dia,
 )
 
 
@@ -312,31 +312,41 @@ def montar_extrato_cotista(
     serie: list[dict[str, Any]] = []
     d = inicio
     while d <= fim:
-        if not e_dia_util(d):
-            d += timedelta(days=1)
-            continue
-        aplicado = 0.0
+        saldo = 0.0
         vp = 0.0
+        aporte = 0.0
+        amortizacao = 0.0
+        juros = 0.0
         n_chamadas = 0
         for ctx in ctxs:
-            ap, vp_ch = totais_chamada_dia(ctx, fatorador, d)
-            if ap <= 0:
+            dia = extrato_chamada_dia(ctx, fatorador, d)
+            if d < ctx["data_aporte"]:
                 continue
-            aplicado += ap
-            vp += vp_ch
             n_chamadas += 1
+            saldo += dia["saldo"]
+            vp += dia["vp"]
+            aporte += dia["aporte"]
+            amortizacao += dia["amortizacao"]
+            juros += dia["juros"]
+
         serie.append(
             {
                 "data": d.isoformat(),
                 "label": _label_dia_extrato(d, fim),
-                "aplicado": round(aplicado, 2),
+                "saldo": round(saldo, 2),
                 "vp": round(vp, 2),
+                "aporte": round(aporte, 2),
+                "amortizacao": round(amortizacao, 2),
+                "juros": round(juros, 2),
                 "n_chamadas": n_chamadas,
+                # compatibilidade com clientes antigos
+                "aplicado": round(saldo, 2),
             }
         )
         d += timedelta(days=1)
 
-    ultimo = serie[-1] if serie else {"aplicado": 0.0, "vp": 0.0}
+    ultimo = serie[-1] if serie else {}
+    total_aportado = round(sum(float(c["nominal"]) for c in ctxs), 2)
     return {
         "data_ref": _br(fim),
         "data_ref_iso": fim.isoformat(),
@@ -350,9 +360,11 @@ def montar_extrato_cotista(
         "inicio_iso": inicio.isoformat(),
         "serie": serie,
         "kpis": {
-            "aplicado": ultimo["aplicado"],
-            "vp": ultimo["vp"],
+            "saldo": ultimo.get("saldo", 0.0),
+            "vp": ultimo.get("vp", 0.0),
+            "total_aportado": total_aportado,
             "n_chamadas": ultimo.get("n_chamadas", 0),
+            "aplicado": ultimo.get("saldo", 0.0),
         },
     }
 
