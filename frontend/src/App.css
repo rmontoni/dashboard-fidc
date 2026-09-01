@@ -1285,6 +1285,11 @@ td.alerta-pct {
   margin-bottom: 14px;
 }
 
+.extrato-kpis {
+  flex-wrap: wrap;
+  row-gap: 10px;
+}
+
 .extrato-filtros {
   flex-wrap: wrap;
   gap: 16px;
@@ -1370,6 +1375,12 @@ td.alerta-pct {
 
 .extrato-serie-scroll .tabela-passivo {
   margin: 0;
+  min-width: 960px;
+}
+
+.extrato-serie-scroll .tabela-passivo th,
+.extrato-serie-scroll .tabela-passivo td {
+  white-space: nowrap;
 }
 
 .extrato-serie-scroll thead th {

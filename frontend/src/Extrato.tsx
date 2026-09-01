@@ -296,7 +296,7 @@ function Extrato() {
         </div>
 
         {extrato?.kpis && (
-          <div className="painel-totais passivo-kpis">
+          <div className="painel-totais passivo-kpis extrato-kpis">
             <div className="painel-total">
               <span>Face</span>
               <strong>{formatarMoeda(extrato.kpis.face)}</strong>
