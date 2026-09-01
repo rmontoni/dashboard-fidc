@@ -15,6 +15,8 @@ from typing import Any, Callable
 from carteira_movimentacoes import CACHE_PATH, META_PATH, _assinatura_estoques_bdr
 
 CACHE_DIR = Path(__file__).resolve().parent / "data" / "extrato_sacado"
+# Incrementar quando a lógica do extrato mudar (invalida JSONs antigos).
+CACHE_ENGINE_VERSAO = "2"
 
 ProgressoFn = Callable[[str, int, int], None]
 
@@ -79,6 +81,8 @@ def _carregar_sacado_cache(sacado: str) -> dict[str, Any] | None:
 
 
 def _cache_sacado_valido(bruto: dict[str, Any], fim: date) -> bool:
+    if str(bruto.get("engine") or "") != CACHE_ENGINE_VERSAO:
+        return False
     if str(bruto.get("assinatura") or "") != assinatura_fontes():
         return False
     cache_ref = str(bruto.get("data_ref_iso") or "")
@@ -167,11 +171,13 @@ def gravar_extrato_modo(
         "data_ref_iso": data_ref.isoformat(),
         "inicio_iso": resultado.get("inicio_iso"),
         "assinatura": assinatura_fontes(),
+        "engine": CACHE_ENGINE_VERSAO,
     }
     ref_atual = str(bruto.get("data_ref_iso") or "")
     if not ref_atual or data_ref.isoformat() >= ref_atual:
         bruto["data_ref_iso"] = data_ref.isoformat()
     bruto["assinatura"] = assinatura_fontes()
+    bruto["engine"] = CACHE_ENGINE_VERSAO
     if resultado.get("inicio_iso"):
         bruto["inicio_iso"] = resultado.get("inicio_iso")
     bruto[chave] = {

@@ -34,10 +34,6 @@ def _label_dia(d: date, ref: date) -> str:
     return d.strftime(fmt)
 
 
-def _chave_sacado(pos: dict[str, Any]) -> str:
-    return str(pos.get("sacado") or "").strip().upper()
-
-
 def _match_sacado(pos: dict[str, Any], alvo: str) -> bool:
     nome = str(pos.get("sacado") or "").strip().upper()
     doc = str(pos.get("doc_sacado") or "").strip()
@@ -177,29 +173,78 @@ def _totais_sacado_marcado(marcado: dict[str, dict[str, Any]]) -> dict[str, floa
     }
 
 
-def _filtrar_sacado(estado: dict[str, dict[str, Any]], alvo: str) -> dict[str, dict[str, Any]]:
-    return {k: dict(v) for k, v in estado.items() if _match_sacado(v, alvo)}
+def _estoque_inicial_sacado(alvo: str) -> dict[str, dict[str, Any]]:
+    from carteira_movimentacoes import carregar_estoque_base
+
+    return {
+        k: dict(v)
+        for k, v in carregar_estoque_base().items()
+        if _match_sacado(v, alvo)
+    }
 
 
-def _primeira_data_sacado(eventos: list[dict[str, Any]], alvo: str) -> date | None:
-    from carteira_movimentacoes import DATA_MINIMA, _parse_data_campo, carregar_estoque_base
-
-    alvo_u = alvo.strip().upper()
-    for pos in carregar_estoque_base().values():
-        if _chave_sacado(pos) == alvo_u:
-            aq = _parse_data_campo(pos.get("data_aquisicao"))
-            if aq and aq >= DATA_MINIMA:
-                return aq
+def _eventos_do_sacado(
+    eventos: list[dict[str, Any]],
+    alvo: str,
+    *,
+    chaves_iniciais: set[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Replay só de aquisições/liquidações dos títulos do sacado."""
+    chaves = set(chaves_iniciais or ())
+    out: list[dict[str, Any]] = []
     for ev in eventos:
-        if str(ev.get("tipo") or "").upper() != "AQUISICAO":
+        chave = str(ev.get("chave") or "")
+        if not chave:
             continue
-        sac = str(ev.get("sacado") or "").strip().upper()
-        if sac != alvo_u:
+        tipo = str(ev.get("tipo") or "").lower()
+        if tipo == "aquisicao":
+            if _match_sacado(ev, alvo):
+                chaves.add(chave)
+                out.append(ev)
+        elif tipo == "liquidacao" and chave in chaves:
+            out.append(ev)
+    return out
+
+
+def _primeira_data_sacado_filtrado(
+    eventos_sacado: list[dict[str, Any]],
+    estoque: dict[str, dict[str, Any]],
+    alvo: str,
+) -> date | None:
+    from carteira_movimentacoes import DATA_MINIMA, _parse_data_campo
+
+    datas: list[date] = []
+    for pos in estoque.values():
+        aq = _parse_data_campo(pos.get("data_aquisicao"))
+        if aq and aq >= DATA_MINIMA:
+            datas.append(aq)
+    alvo_u = alvo.strip().upper()
+    for ev in eventos_sacado:
+        if str(ev.get("tipo") or "").lower() != "aquisicao":
+            continue
+        if str(ev.get("sacado") or "").strip().upper() != alvo_u:
             continue
         d = _parse_data_campo(ev.get("data"))
         if d:
-            return d
-    return None
+            datas.append(d)
+    return min(datas) if datas else None
+
+
+def _juros_dia_subset(
+    subset: dict[str, dict[str, Any]],
+    d: date,
+    d_prev: date | None,
+    *,
+    acumular: bool,
+) -> float:
+    """Juros contratuais (VP D − VP D−1) sobre posições já filtradas do sacado."""
+    if d_prev is None or not subset:
+        return 0.0
+    vp_d = _totais_sacado_marcado(_marcar_subset_sacado(subset, d, acumular=acumular))["vp"]
+    vp_prev = _totais_sacado_marcado(
+        _marcar_subset_sacado(subset, d_prev, acumular=acumular)
+    )["vp"]
+    return round(vp_d - vp_prev, 2)
 
 
 def _match_sacado_evento(
@@ -233,29 +278,6 @@ def _movimentos_dia_sacado(
             if _match_sacado_evento(ev, sacado, estado_ref):
                 liquidacao += float(ev.get("valor_pago") or 0)
     return round(aquisicao, 2), round(liquidacao, 2)
-
-
-def _juros_dia_sacado(
-    estado_inicio: dict[str, dict[str, Any]],
-    sacado: str,
-    d: date,
-    d_prev: date | None,
-    *,
-    acumular: bool,
-) -> float:
-    """Juros contratuais do dia (VP D − VP D−1) sobre a carteira do sacado."""
-    if d_prev is None:
-        return 0.0
-    subset = _filtrar_sacado(estado_inicio, sacado)
-    if not subset:
-        return 0.0
-    vp_d = _totais_sacado_marcado(
-        _marcar_subset_sacado(subset, d, acumular=acumular)
-    )["vp"]
-    vp_prev = _totais_sacado_marcado(
-        _marcar_subset_sacado(subset, d_prev, acumular=acumular)
-    )["vp"]
-    return round(vp_d - vp_prev, 2)
 
 
 def montar_extrato_sacado(
@@ -298,49 +320,60 @@ def _montar_extrato_sacado_live(
 ) -> dict[str, Any]:
     acumular = modo in ("juros_pos_venc", "juros-pos-venc", "2")
     fim = _parse_data_base(data_base)
+    alvo = sacado.strip()
 
     from carteira_movimentacoes import (
         DATA_MINIMA,
         _aplicar_eventos_ate,
         _aplicar_repactuacoes,
         _carregar_eventos,
-        carregar_estoque_base,
     )
 
-    eventos = _carregar_eventos(desde=DATA_MINIMA)
-    inicio = _primeira_data_sacado(eventos, sacado) or DATA_MINIMA
+    estado = _estoque_inicial_sacado(alvo)
+    chaves_iniciais = set(estado)
+    todos_eventos = _carregar_eventos(desde=DATA_MINIMA)
+    eventos = _eventos_do_sacado(todos_eventos, alvo, chaves_iniciais=chaves_iniciais)
+
+    inicio = _primeira_data_sacado_filtrado(eventos, estado, alvo) or DATA_MINIMA
     if inicio > fim:
         inicio = fim
 
-    estado = carregar_estoque_base()
     ev_idx = 0
     serie: list[dict[str, Any]] = []
     d_prev_util: date | None = None
 
-    d = inicio
+    # Aplica movimentos anteriores ao primeiro dia útil da série.
+    d_loop = inicio
+    while d_loop <= fim and not e_dia_util(d_loop):
+        d_loop += timedelta(days=1)
+    if d_loop <= fim and d_loop > inicio:
+        limite_pre = d_loop - timedelta(days=1)
+        while ev_idx < len(eventos) and str(eventos[ev_idx].get("data") or "") <= limite_pre.isoformat():
+            ev_idx += 1
+        if ev_idx > 0:
+            estado = _aplicar_eventos_ate(eventos[:ev_idx], limite_pre, base=estado)
+            _aplicar_repactuacoes(estado, limite_pre)
+
+    d = d_loop if d_loop <= fim else inicio
     while d <= fim:
         if not e_dia_util(d):
             d += timedelta(days=1)
             continue
         d_iso = d.isoformat()
-        estado_inicio = {k: dict(v) for k, v in estado.items()}
         inicio_ev = ev_idx
         while ev_idx < len(eventos) and str(eventos[ev_idx].get("data") or "") <= d_iso:
             ev_idx += 1
 
         aquisicao, liquidacao = _movimentos_dia_sacado(
-            eventos, inicio_ev, ev_idx, sacado, estado_inicio
+            eventos, inicio_ev, ev_idx, alvo, estado
         )
-        juros = _juros_dia_sacado(
-            estado_inicio, sacado, d, d_prev_util, acumular=acumular
-        )
+        juros = _juros_dia_subset(estado, d, d_prev_util, acumular=acumular)
 
         if ev_idx > inicio_ev:
             estado = _aplicar_eventos_ate(eventos[inicio_ev:ev_idx], d, base=estado)
         _aplicar_repactuacoes(estado, d)
 
-        subset = _filtrar_sacado(estado, sacado)
-        marcado = _marcar_subset_sacado(subset, d, acumular=acumular)
+        marcado = _marcar_subset_sacado(estado, d, acumular=acumular)
         tot = _totais_sacado_marcado(marcado)
         if tot["n_titulos"] > 0 or serie:
             serie.append(
