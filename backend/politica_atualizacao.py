@@ -3,11 +3,10 @@
 Regras:
 - **Sem caixa** (BDR movimentações, eventos, estoque): sempre até **D-2**
   (``conciliacao.data_base_maxima``).
-- **IDSF / caixa** (liquidez, classes, taxas, passivo, série/PL motor): no
-  mínimo até a **última data de liquidez IDSF** disponível; a carga tenta
-  estender a liquidez até D-2.
-- **Série diária do motor**: deve cobrir todas as datas com liquidez IDSF
-  (não pode ficar atrás da liquidez).
+- **Carteira própria (série)**: sempre até **D-2** (dias úteis), independente
+  de BDR ou IDSF; conciliação IDSF por dia é opcional.
+- **IDSF / caixa** (liquidez, classes, taxas, passivo): no mínimo até a
+  **última data de liquidez IDSF** disponível; a carga tenta estender até D-2.
 """
 
 from __future__ import annotations
@@ -29,7 +28,7 @@ def alvo_sem_caixa(referencia: date | None = None) -> date:
 
 
 def referencia_idsf() -> date | None:
-    """Última data com liquidez IDSF carregada (referência para PL/série)."""
+    """Última data com liquidez IDSF carregada (referência para PL/classes)."""
     from atualizacoes import _ultima_data_liquidez
 
     return _ultima_data_liquidez()
@@ -89,7 +88,7 @@ def verificar_cobertura(referencia: date | None = None) -> dict[str, Any]:
         if atual is None or atual < alvo:
             lacunas.append(_lacuna(id_, label, atual, alvo, politica=politica))
 
-    # Sem caixa → D-2
+    # Sem caixa + série → D-2
     _registrar(
         "bdr_estoque",
         "BDR - Estoque",
@@ -104,22 +103,22 @@ def verificar_cobertura(referencia: date | None = None) -> dict[str, Any]:
         d2,
         politica="d2",
     )
-
-    # Liquidez IDSF → idealmente D-2
-    _registrar("idsf", "IDSF - Liquidez", liq, d2, politica="d2")
-
-    # Demais IDSF / caixa → última liquidez disponível
-    _registrar(
-        "idsf_classes",
-        "IDSF - Classes",
-        _ultima_data_classes(),
-        ref_idsf,
-        politica="idsf",
-    )
     _registrar(
         "carteira_propria",
         "Carteira Própria (série)",
         _ultima_data_serie(),
+        d2,
+        politica="d2",
+    )
+
+    # Liquidez IDSF → idealmente D-2
+    _registrar("idsf", "IDSF - Liquidez", liq, d2, politica="d2")
+
+    # Demais IDSF → última liquidez disponível
+    _registrar(
+        "idsf_classes",
+        "IDSF - Classes",
+        _ultima_data_classes(),
         ref_idsf,
         politica="idsf",
     )
@@ -145,9 +144,14 @@ def item_atualizacao(
     d2 = alvo_d2(referencia)
     ref_idsf = referencia_idsf() or d2
 
-    sem_caixa = id_ in ("bdr_estoque", "bdr_movimentacoes")
-    alvo = d2 if (sem_caixa or id_ == "idsf") else ref_idsf
-    politica = "d2" if (sem_caixa or id_ == "idsf") else "idsf"
+    alvo_d2_ids = id_ in (
+        "bdr_estoque",
+        "bdr_movimentacoes",
+        "carteira_propria",
+        "idsf",
+    )
+    alvo = d2 if alvo_d2_ids else ref_idsf
+    politica = "d2" if alvo_d2_ids else "idsf"
     atualizado = data is not None and data >= alvo
 
     return {

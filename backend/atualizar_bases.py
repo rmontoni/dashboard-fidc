@@ -1,10 +1,9 @@
 """Orquestra a atualização de todas as bases até a última data possível.
 
 Política (ver ``politica_atualizacao``):
-- Sem caixa (BDR mov/estoque/eventos): D-2.
-- IDSF (liquidez, classes, série/PL): no mínimo até a última liquidez IDSF;
+- Sem caixa (BDR mov/estoque/eventos) e série do motor: D-2.
+- IDSF (liquidez, classes, taxas, passivo): até a última liquidez IDSF;
   a carga de liquidez tenta ir até D-2.
-- Série diária: não pode ficar atrás da liquidez IDSF.
 """
 
 from __future__ import annotations
@@ -339,20 +338,19 @@ def _etapa_pdfs_sub(fim: date) -> dict[str, Any]:
 
 
 def _etapa_serie() -> dict[str, Any]:
-    from atualizacoes import _parse_iso, _ultima_data_liquidez, _ultima_data_serie
+    from atualizacoes import _parse_iso, _ultima_data_serie
     from carteira_movimentacoes import (
         DATA_MINIMA,
         mapa_dc_bdr_diario,
         reconstruir_serie_diaria,
     )
-    from politica_atualizacao import referencia_idsf
+    from politica_atualizacao import alvo_d2
 
     serie = mapa_dc_bdr_diario()
     datas_serie = [_parse_iso(k) for k in serie]
     datas_serie = [d for d in datas_serie if d is not None]
     ultima_serie = max(datas_serie) if datas_serie else None
-    ultima_liq = referencia_idsf() or _ultima_data_liquidez()
-    alvo = ultima_liq
+    alvo = alvo_d2()
 
     if (
         ultima_serie is not None
@@ -364,12 +362,12 @@ def _etapa_serie() -> dict[str, Any]:
             "ok": True,
             "pulado": True,
             "mensagem": (
-                f"série já cobre a liquidez IDSF até {alvo.isoformat()} "
+                f"série já cobre D-2 até {alvo.isoformat()} "
                 f"({len(serie)} dias)"
             ),
             "dias": len(serie),
             "ultima": ultima_serie.isoformat(),
-            "alvo_idsf": alvo.isoformat(),
+            "alvo_d2": alvo.isoformat(),
         }
 
     def progresso(fase: str, info: dict[str, float]) -> None:
@@ -393,16 +391,16 @@ def _etapa_serie() -> dict[str, Any]:
             "ok": ok,
             "dias": len(por_dia),
             "ultima": ultima_pos.isoformat() if ultima_pos else None,
-            "alvo_idsf": alvo.isoformat() if alvo else None,
+            "alvo_d2": alvo.isoformat(),
             "pulado": False,
             "modo": "incremental",
             "desde": desde.isoformat(),
             "mensagem": None
             if ok
             else (
-                f"série parou em {ultima_pos}; liquidez IDSF até {alvo}"
+                f"série parou em {ultima_pos}; alvo D-2 {alvo}"
                 if alvo and ultima_pos
-                else "série não alcançou a liquidez IDSF"
+                else "série não alcançou D-2"
             ),
         }
 
@@ -414,15 +412,15 @@ def _etapa_serie() -> dict[str, Any]:
         "ok": ok,
         "dias": len(por_dia),
         "ultima": ultima_pos.isoformat() if ultima_pos else None,
-        "alvo_idsf": alvo.isoformat() if alvo else None,
+        "alvo_d2": alvo.isoformat() if alvo else None,
         "pulado": False,
         "modo": "completo",
         "mensagem": None
         if ok
         else (
-            f"série parou em {ultima_pos}; liquidez IDSF até {alvo}"
+            f"série parou em {ultima_pos}; alvo D-2 {alvo}"
             if alvo and ultima_pos
-            else "série não alcançou a liquidez IDSF"
+            else "série não alcançou D-2"
         ),
     }
 

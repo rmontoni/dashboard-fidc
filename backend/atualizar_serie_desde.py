@@ -9,7 +9,6 @@ from datetime import date, datetime, timedelta, timezone
 
 from dotenv import load_dotenv
 
-from calendario import e_dia_util
 from carteira_movimentacoes import (
     DATA_MINIMA,
     DIARIO_PATH,
@@ -21,10 +20,10 @@ from carteira_movimentacoes import (
     _totais_motor,
     anexar_prazo_atual_do_dia,
     carregar_estoque_base,
+    datas_util_serie_ate,
     mapa_dc_bdr_diario,
     saltos_prazo_atual_do_dia,
 )
-from db import mapa_liquidez_diario
 from marcacao_carteira import atualizar_marcacao
 
 load_dotenv()
@@ -40,12 +39,7 @@ def atualizar_desde(
     t0 = time.perf_counter()
     serie = dict(mapa_dc_bdr_diario())
     eventos = _carregar_eventos(desde=DATA_MINIMA)
-    datas_alvo = []
-    for d_iso in sorted(mapa_liquidez_diario()):
-        d = _parse_data_campo(d_iso)
-        if d is None or not e_dia_util(d) or d < DATA_MINIMA:
-            continue
-        datas_alvo.append(d_iso)
+    datas_alvo = datas_util_serie_ate()
 
     estado = carregar_estoque_base()
     ev_idx = 0

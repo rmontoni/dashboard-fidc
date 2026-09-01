@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from collections.abc import Callable
 from typing import Any
@@ -993,6 +993,26 @@ def _idsf_do_dia(data_ref: date) -> dict[str, float]:
     }
 
 
+def datas_util_serie_ate(fim: date | None = None) -> list[str]:
+    """Dias úteis da série do motor (DATA_MINIMA .. D-2 por padrão).
+
+    Independente da liquidez IDSF — a conciliação com IDSF é opcional por dia.
+    """
+    from calendario import e_dia_util
+    from conciliacao import data_base_maxima
+
+    limite = fim or data_base_maxima()
+    if limite < DATA_MINIMA:
+        return []
+    out: list[str] = []
+    d = DATA_MINIMA
+    while d <= limite:
+        if e_dia_util(d):
+            out.append(d.isoformat())
+        d += timedelta(days=1)
+    return out
+
+
 def reconstruir_serie_diaria(
     eventos: list[dict[str, Any]] | None = None,
     *,
@@ -1008,23 +1028,14 @@ def reconstruir_serie_diaria(
     lado IDSF (DC bruto e PDD) e a conciliação, que alimentam o calendário.
 
     Datas anteriores a DATA_MINIMA não são cobertas pelo motor.
+    A série cobre todos os dias úteis até D-2 (não depende da liquidez IDSF).
     """
-    from db import mapa_liquidez_diario
     from marcacao_carteira import atualizar_marcacao
-    from calendario import e_dia_util
 
     if eventos is None:
         eventos = _carregar_eventos(desde=DATA_MINIMA)
 
-    corte = DATA_MINIMA.isoformat()
-    datas_alvo: list[str] = []
-    for d_iso in sorted(mapa_liquidez_diario()):
-        if d_iso < corte:
-            continue
-        d = _parse_data_campo(d_iso)
-        if d is None or not e_dia_util(d):
-            continue
-        datas_alvo.append(d_iso)
+    datas_alvo = datas_util_serie_ate()
     anterior = mapa_dc_bdr_diario() if reaproveitar_idsf else {}
 
     serie: dict[str, dict[str, float]] = {}
