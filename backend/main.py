@@ -514,6 +514,24 @@ def get_passivo_vencimentos(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@app.get("/fidc/passivo/vencimentos/detalhe")
+def get_passivo_vencimento_detalhe(
+    dataVencimento: str = Query(..., description="Data de vencimento dd/mm/yyyy ou ISO"),
+    dataBase: str = Query(..., description="Data base dd/mm/yyyy ou ISO"),
+):
+    """Cotistas e parcelas com amortização na data de vencimento."""
+    try:
+        from passivo_vencimentos import montar_detalhe_vencimento
+
+        return montar_detalhe_vencimento(dataVencimento, dataBase)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 @app.get("/fidc/passivo/fluxo-caixa")
 def get_passivo_fluxo_caixa(
     dataBase: str = Query(..., description="Data base dd/mm/yyyy ou YYYY-MM-DD"),
@@ -615,12 +633,13 @@ def get_passivo_cotista_extrato(
 @app.get("/fidc/extrato/sacados")
 def get_extrato_sacados_lista(
     dataBase: str = Query(..., description="Data base dd/mm/yyyy ou YYYY-MM-DD"),
+    cedente: str | None = Query(None, description="Filtrar por cedente"),
 ):
     """Lista sacados com posição na data base."""
     try:
         from extrato_sacado import listar_sacados
 
-        return listar_sacados(dataBase)
+        return listar_sacados(dataBase, cedente=cedente)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
@@ -635,12 +654,13 @@ def get_extrato_sacado(
         "motor",
         description="motor (sem juros pós-venc) ou juros_pos_venc",
     ),
+    cedente: str | None = Query(None, description="Filtrar por cedente"),
 ):
     """Evolução diária da posição do sacado (motor de carteira)."""
     try:
         from extrato_sacado import montar_extrato_sacado
 
-        return montar_extrato_sacado(sacado, dataBase, modo=modo)
+        return montar_extrato_sacado(sacado, dataBase, modo=modo, cedente=cedente)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001

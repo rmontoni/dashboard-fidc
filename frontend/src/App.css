@@ -1290,6 +1290,55 @@ td.alerta-pct {
   row-gap: 10px;
 }
 
+.extrato-kpis-hoje {
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--line);
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+
+.extrato-kpis-hoje-titulo {
+  width: 100%;
+  margin: 0 0 6px;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.tabela-passivo tr.linha-clicavel {
+  cursor: pointer;
+}
+
+.tabela-passivo tr.linha-clicavel:hover td {
+  background: rgba(31, 111, 139, 0.06);
+}
+
+.tabela-passivo tr.linha-selecionada td {
+  background: rgba(31, 111, 139, 0.1);
+}
+
+.passivo-detalhe-vencimento {
+  margin-top: 16px;
+}
+
+.passivo-amort-hoje {
+  margin-bottom: 12px;
+}
+
+.link-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  text-decoration: underline;
+}
+
+.tabela-passivo tr.linha-hoje td {
+  font-weight: 600;
+}
+
 .extrato-filtros {
   flex-wrap: wrap;
   gap: 16px;

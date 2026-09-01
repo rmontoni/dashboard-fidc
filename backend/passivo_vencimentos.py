@@ -206,6 +206,117 @@ def montar_vencimentos(data_base: str | None = None) -> dict[str, Any]:
         "por_classe": classes_out,
         "por_data": datas_out,
         "por_cotista": cotistas_out,
+        **_projecao_calendario(ref),
+    }
+
+
+def _projecao_calendario(ref: date) -> dict[str, Any]:
+    """Valores na data de calendário de hoje (quando data base < hoje)."""
+    hoje = date.today()
+    if hoje <= ref:
+        return {}
+    _, pos_hoje = _carregar_posicoes(hoje)
+    parc_hoje = [
+        parc
+        for p in pos_hoje
+        for parc in p.parcelas
+        if parc.data_vencimento == hoje and not parc.liquidada
+    ]
+    cotistas_hoje = {p.cotista_id for p in pos_hoje for parc in p.parcelas if parc.data_vencimento == hoje and not parc.liquidada}
+    return {
+        "projecao_hoje": {
+            "data_valoracao": hoje.isoformat(),
+            "data_valoracao_br": _br(hoje),
+            "amortizacao_hoje": {
+                "data": _br(hoje),
+                "data_iso": hoje.isoformat(),
+                "valor_liquidacao": round(sum(p.valor_na_liquidacao for p in parc_hoje), 2),
+                "vp": round(sum(p.valor_presente for p in parc_hoje), 2),
+                "n_parcelas": len(parc_hoje),
+                "n_cotistas": len(cotistas_hoje),
+            },
+        },
+    }
+
+
+def montar_detalhe_vencimento(
+    data_vencimento: str,
+    data_base: str | None = None,
+) -> dict[str, Any]:
+    """Cotistas e parcelas com vencimento na data indicada."""
+    venc = _parse_data_base(data_vencimento)
+    ref = _parse_data_base(data_base) if data_base else date.today()
+    valoracao = date.today() if venc >= date.today() else ref
+    _, posicoes = _carregar_posicoes(valoracao)
+
+    por_cotista: dict[int, dict[str, Any]] = {}
+    total_liq = total_vp = total_aplicado = 0.0
+    n_parcelas = 0
+
+    for p in posicoes:
+        for parc in p.parcelas:
+            if parc.data_vencimento != venc:
+                continue
+            n_parcelas += 1
+            total_liq += parc.valor_na_liquidacao
+            total_vp += parc.valor_presente
+            total_aplicado += parc.valor_original
+            cid = p.cotista_id
+            if cid not in por_cotista:
+                por_cotista[cid] = {
+                    "cotista_id": cid,
+                    "nome": p.cotista_nome,
+                    "documento": p.cotista_documento,
+                    "aplicado": 0.0,
+                    "vp": 0.0,
+                    "valor_liquidacao": 0.0,
+                    "parcelas": [],
+                }
+            row = por_cotista[cid]
+            row["aplicado"] += parc.valor_original
+            row["vp"] += parc.valor_presente
+            row["valor_liquidacao"] += parc.valor_na_liquidacao
+            row["parcelas"].append(
+                {
+                    "classe": p.classe.nome,
+                    "chamada_numero": p.numero,
+                    "ordem": parc.ordem,
+                    "rotulo": parc.rotulo,
+                    "liquidada": parc.liquidada,
+                    "valor_original": round(parc.valor_original, 2),
+                    "valor_presente": round(parc.valor_presente, 2),
+                    "valor_liquidacao": round(parc.valor_na_liquidacao, 2),
+                }
+            )
+
+    cotistas_out = []
+    for row in sorted(por_cotista.values(), key=lambda r: r["nome"].upper()):
+        cotistas_out.append(
+            {
+                "cotista_id": row["cotista_id"],
+                "nome": row["nome"],
+                "documento": row["documento"],
+                "aplicado": round(row["aplicado"], 2),
+                "vp": round(row["vp"], 2),
+                "valor_liquidacao": round(row["valor_liquidacao"], 2),
+                "parcelas": row["parcelas"],
+            }
+        )
+
+    return {
+        "data_vencimento": _br(venc),
+        "data_vencimento_iso": venc.isoformat(),
+        "data_valoracao": _br(valoracao),
+        "data_valoracao_iso": valoracao.isoformat(),
+        "data_ref": _br(ref),
+        "totais": {
+            "aplicado": round(total_aplicado, 2),
+            "vp": round(total_vp, 2),
+            "valor_liquidacao": round(total_liq, 2),
+            "n_parcelas": n_parcelas,
+            "n_cotistas": len(por_cotista),
+        },
+        "por_cotista": cotistas_out,
     }
 
 

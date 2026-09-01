@@ -16,9 +16,18 @@ import './App.css'
 type SacadoItem = {
   sacado: string
   doc_sacado: string | null
+  cedente?: string
   face: number
   vp: number
   pdd: number
+  n_titulos: number
+}
+
+type CedenteItem = {
+  cedente: string
+  face: number
+  vp: number
+  n_sacados: number
   n_titulos: number
 }
 
@@ -50,6 +59,14 @@ type RespostaExtrato = {
     juros?: number
     liquidacao?: number
   }
+  kpis_hoje?: {
+    data: string
+    data_iso: string
+    face: number
+    vp: number
+    vencido: number
+    pdd: number
+  }
 }
 
 const STORAGE_DATA_BASE = 'fidc_data_base'
@@ -80,6 +97,8 @@ function Extrato() {
     const hoje = new Date()
     return { ano: hoje.getFullYear(), mes: hoje.getMonth() }
   })
+  const [cedentes, setCedentes] = useState<CedenteItem[]>([])
+  const [cedenteSel, setCedenteSel] = useState('')
   const [sacados, setSacados] = useState<SacadoItem[]>([])
   const [sacadoSel, setSacadoSel] = useState('')
   const [modo, setModo] = useState<'motor' | 'juros_pos_venc'>('motor')
@@ -139,15 +158,17 @@ function Extrato() {
     let cancelado = false
     async function carregarSacados() {
       try {
-        const res = await fetch(
-          `${API_BASE}/fidc/extrato/sacados?dataBase=${encodeURIComponent(dataBase)}`,
-        )
+        const params = new URLSearchParams({ dataBase })
+        if (cedenteSel) params.set('cedente', cedenteSel)
+        const res = await fetch(`${API_BASE}/fidc/extrato/sacados?${params}`)
         const json = await res.json()
         if (cancelado) return
         if (!res.ok) {
+          setCedentes([])
           setSacados([])
           return
         }
+        setCedentes((json.cedentes ?? []) as CedenteItem[])
         const lista = (json.sacados ?? []) as SacadoItem[]
         setSacados(lista)
         setSacadoSel((atual) => {
@@ -155,14 +176,17 @@ function Extrato() {
           return lista[0]?.sacado ?? ''
         })
       } catch {
-        if (!cancelado) setSacados([])
+        if (!cancelado) {
+          setCedentes([])
+          setSacados([])
+        }
       }
     }
     void carregarSacados()
     return () => {
       cancelado = true
     }
-  }, [dataBase])
+  }, [dataBase, cedenteSel])
 
   useEffect(() => {
     if (!dataBase || !sacadoSel) {
@@ -181,6 +205,7 @@ function Extrato() {
           sacado: sacadoSel,
           modo,
         })
+        if (cedenteSel) params.set('cedente', cedenteSel)
         const res = await fetch(`${API_BASE}/fidc/extrato/sacado?${params}`, {
           signal: ctrl.signal,
         })
@@ -213,7 +238,7 @@ function Extrato() {
       ctrl.abort()
       window.clearTimeout(timer)
     }
-  }, [dataBase, sacadoSel, modo])
+  }, [dataBase, sacadoSel, modo, cedenteSel])
 
   const grafico = useMemo(() => {
     if (!extrato?.serie?.length) return []
@@ -259,6 +284,21 @@ function Extrato() {
       <section className="painel">
         <div className="painel-cabecalho extrato-filtros">
           <label className="select-cotista">
+            Cedente
+            <select
+              value={cedenteSel}
+              onChange={(e) => setCedenteSel(e.target.value)}
+              disabled={cedentes.length === 0}
+            >
+              <option value="">Todos</option>
+              {cedentes.map((c) => (
+                <option key={c.cedente} value={c.cedente}>
+                  {c.cedente} — VP {formatarMoeda(c.vp)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="select-cotista">
             Sacado
             <select
               value={sacadoSel}
@@ -298,20 +338,44 @@ function Extrato() {
         {extrato?.kpis && (
           <div className="painel-totais passivo-kpis extrato-kpis">
             <div className="painel-total">
-              <span>Face</span>
+              <span>Face (data base)</span>
               <strong>{formatarMoeda(extrato.kpis.face)}</strong>
             </div>
             <div className="painel-total">
-              <span>VP</span>
+              <span>VP (data base)</span>
               <strong>{formatarMoeda(extrato.kpis.vp)}</strong>
             </div>
             <div className="painel-total">
-              <span>Vencido</span>
+              <span>Vencido (data base)</span>
               <strong>{formatarMoeda(extrato.kpis.vencido)}</strong>
             </div>
             <div className="painel-total">
-              <span>PDD</span>
+              <span>PDD (data base)</span>
               <strong>{formatarMoeda(extrato.kpis.pdd)}</strong>
+            </div>
+          </div>
+        )}
+
+        {extrato?.kpis_hoje && (
+          <div className="painel-totais passivo-kpis extrato-kpis extrato-kpis-hoje">
+            <p className="extrato-kpis-hoje-titulo">
+              Projeção em {extrato.kpis_hoje.data} (calendário)
+            </p>
+            <div className="painel-total">
+              <span>VP hoje</span>
+              <strong>{formatarMoeda(extrato.kpis_hoje.vp)}</strong>
+            </div>
+            <div className="painel-total">
+              <span>Vencido hoje</span>
+              <strong>{formatarMoeda(extrato.kpis_hoje.vencido)}</strong>
+            </div>
+            <div className="painel-total">
+              <span>Face hoje</span>
+              <strong>{formatarMoeda(extrato.kpis_hoje.face)}</strong>
+            </div>
+            <div className="painel-total">
+              <span>PDD hoje</span>
+              <strong>{formatarMoeda(extrato.kpis_hoje.pdd)}</strong>
             </div>
           </div>
         )}

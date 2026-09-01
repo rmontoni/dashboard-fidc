@@ -42,25 +42,61 @@ def _match_sacado(pos: dict[str, Any], alvo: str) -> bool:
     return nome == alvo_u or (doc and doc == alvo_doc)
 
 
-def _listar_sacados_live(data_base: str) -> dict[str, Any]:
+def _match_cedente(pos: dict[str, Any], cedente: str | None) -> bool:
+    if not cedente or cedente.strip().upper() in ("", "TODOS"):
+        return True
+    return str(pos.get("cedente") or "").strip().upper() == cedente.strip().upper()
+
+
+def _listar_sacados_live(
+    data_base: str,
+    *,
+    cedente: str | None = None,
+) -> dict[str, Any]:
     """Sacados com posição aberta na data base (recalcula pelo motor)."""
     from carteira_movimentacoes import carregar_carteira_movimentacoes
 
     ref = _parse_data_base(data_base)
     df = carregar_carteira_movimentacoes(ref)
     if df is None or df.empty:
-        return {"data_ref": _br(ref), "data_ref_iso": ref.isoformat(), "sacados": []}
+        return {
+            "data_ref": _br(ref),
+            "data_ref_iso": ref.isoformat(),
+            "cedentes": [],
+            "sacados": [],
+        }
 
+    agg_ced: dict[str, dict[str, Any]] = {}
     agg: dict[str, dict[str, Any]] = {}
     for _, row in df.iterrows():
+        nome_ced = str(row.get("cedente") or "").strip() or "(sem cedente)"
         nome = str(row.get("sacado") or "").strip()
         if not nome:
             continue
+        if cedente and not _match_cedente(row, cedente):
+            continue
+        chave_ced = nome_ced.upper()
+        if chave_ced not in agg_ced:
+            agg_ced[chave_ced] = {
+                "cedente": nome_ced,
+                "face": 0.0,
+                "vp": 0.0,
+                "n_sacados": set(),
+                "n_titulos": 0,
+            }
+        agg_ced[chave_ced]["face"] += float(row.get("valor_face") or 0)
+        vp_c = row.get("vl_presente_adm")
+        agg_ced[chave_ced]["vp"] += float(vp_c) if vp_c == vp_c else 0.0
+        agg_ced[chave_ced]["n_sacados"].add(nome.upper())
+        agg_ced[chave_ced]["n_titulos"] += 1
+
         chave = nome.upper()
         if chave not in agg:
+            doc = row.get("doc_sacado")
             agg[chave] = {
                 "sacado": nome,
-                "doc_sacado": None,
+                "doc_sacado": str(doc).strip() if doc == doc and doc else None,
+                "cedente": nome_ced,
                 "face": 0.0,
                 "vp": 0.0,
                 "pdd": 0.0,
@@ -68,10 +104,23 @@ def _listar_sacados_live(data_base: str) -> dict[str, Any]:
             }
         agg[chave]["face"] += float(row.get("valor_face") or 0)
         vp = row.get("vl_presente_adm")
-        agg[chave]["vp"] += float(vp) if vp == vp else 0.0  # noqa: PLR0124
+        agg[chave]["vp"] += float(vp) if vp == vp else 0.0
         pdd = row.get("vl_pdd")
         agg[chave]["pdd"] += float(pdd) if pdd == pdd else 0.0
         agg[chave]["n_titulos"] += 1
+
+    cedentes = []
+    for item in agg_ced.values():
+        cedentes.append(
+            {
+                "cedente": item["cedente"],
+                "face": round(item["face"], 2),
+                "vp": round(item["vp"], 2),
+                "n_sacados": len(item["n_sacados"]),
+                "n_titulos": item["n_titulos"],
+            }
+        )
+    cedentes.sort(key=lambda c: (-c["vp"], c["cedente"]))
 
     sacados = []
     for item in agg.values():
@@ -79,6 +128,7 @@ def _listar_sacados_live(data_base: str) -> dict[str, Any]:
             {
                 "sacado": item["sacado"],
                 "doc_sacado": item["doc_sacado"],
+                "cedente": item["cedente"],
                 "face": round(item["face"], 2),
                 "vp": round(item["vp"], 2),
                 "pdd": round(item["pdd"], 2),
@@ -89,13 +139,14 @@ def _listar_sacados_live(data_base: str) -> dict[str, Any]:
     return {
         "data_ref": _br(ref),
         "data_ref_iso": ref.isoformat(),
+        "cedentes": cedentes,
         "sacados": sacados,
     }
 
 
-def listar_sacados(data_base: str) -> dict[str, Any]:
+def listar_sacados(data_base: str, *, cedente: str | None = None) -> dict[str, Any]:
     """Sacados com posição aberta na data base (motor)."""
-    return _listar_sacados_live(data_base)
+    return _listar_sacados_live(data_base, cedente=cedente)
 
 
 def _vp_posicao(
@@ -196,13 +247,13 @@ def _vencido_posicao(
     return money_half_up(float(pos.get("valor_face") or 0))
 
 
-def _estoque_inicial_sacado(alvo: str) -> dict[str, dict[str, Any]]:
+def _estoque_inicial_sacado(alvo: str, *, cedente: str | None = None) -> dict[str, dict[str, Any]]:
     from carteira_movimentacoes import carregar_estoque_base
 
     return {
         k: dict(v)
         for k, v in carregar_estoque_base().items()
-        if _match_sacado(v, alvo)
+        if _match_sacado(v, alvo) and _match_cedente(v, cedente)
     }
 
 
@@ -211,6 +262,7 @@ def _eventos_do_sacado(
     alvo: str,
     *,
     chaves_iniciais: set[str] | None = None,
+    cedente: str | None = None,
 ) -> list[dict[str, Any]]:
     """Replay só de aquisições/liquidações dos títulos do sacado."""
     chaves = set(chaves_iniciais or ())
@@ -221,7 +273,7 @@ def _eventos_do_sacado(
             continue
         tipo = str(ev.get("tipo") or "").lower()
         if tipo == "aquisicao":
-            if _match_sacado(ev, alvo):
+            if _match_sacado(ev, alvo) and _match_cedente(ev, cedente):
                 chaves.add(chave)
                 out.append(ev)
         elif tipo == "liquidacao" and chave in chaves:
@@ -303,11 +355,101 @@ def _movimentos_dia_sacado(
     return round(aquisicao, 2), round(liquidacao, 2)
 
 
+def _estado_sacado_ate(
+    sacado: str,
+    data_alvo: date,
+    *,
+    cedente: str | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Replay do estoque do sacado até data_alvo (inclusive, dias úteis)."""
+    alvo = sacado.strip()
+    from carteira_movimentacoes import (
+        DATA_MINIMA,
+        _aplicar_eventos_ate,
+        _aplicar_repactuacoes,
+        _carregar_eventos,
+    )
+
+    estado = _estoque_inicial_sacado(alvo, cedente=cedente)
+    chaves_iniciais = set(estado)
+    todos_eventos = _carregar_eventos(desde=DATA_MINIMA)
+    eventos = _eventos_do_sacado(
+        todos_eventos, alvo, chaves_iniciais=chaves_iniciais, cedente=cedente
+    )
+
+    inicio = _primeira_data_sacado_filtrado(eventos, estado, alvo) or DATA_MINIMA
+    if inicio > data_alvo:
+        return estado
+
+    ev_idx = 0
+    d_loop = inicio
+    while d_loop <= data_alvo and not e_dia_util(d_loop):
+        d_loop += timedelta(days=1)
+    if d_loop <= data_alvo and d_loop > inicio:
+        limite_pre = d_loop - timedelta(days=1)
+        while ev_idx < len(eventos) and str(eventos[ev_idx].get("data") or "") <= limite_pre.isoformat():
+            ev_idx += 1
+        if ev_idx > 0:
+            estado = _aplicar_eventos_ate(eventos[:ev_idx], limite_pre, base=estado)
+            _aplicar_repactuacoes(estado, limite_pre)
+
+    d = d_loop if d_loop <= data_alvo else inicio
+    while d <= data_alvo:
+        if not e_dia_util(d):
+            d += timedelta(days=1)
+            continue
+        d_iso = d.isoformat()
+        inicio_ev = ev_idx
+        while ev_idx < len(eventos) and str(eventos[ev_idx].get("data") or "") <= d_iso:
+            ev_idx += 1
+        if ev_idx > inicio_ev:
+            estado = _aplicar_eventos_ate(eventos[inicio_ev:ev_idx], d, base=estado)
+        _aplicar_repactuacoes(estado, d)
+        d += timedelta(days=1)
+    return estado
+
+
+def _kpis_sacado_em(
+    sacado: str,
+    data_alvo: date,
+    *,
+    modo: str = "motor",
+    cedente: str | None = None,
+) -> dict[str, float]:
+    acumular = modo in ("juros_pos_venc", "juros-pos-venc", "2")
+    estado = _estado_sacado_ate(sacado, data_alvo, cedente=cedente)
+    marcado = _marcar_subset_sacado(estado, data_alvo, acumular=acumular)
+    return _totais_sacado_marcado(marcado, data_alvo, acumular=acumular)
+
+
+def _anexar_kpis_hoje(
+    resultado: dict[str, Any],
+    *,
+    sacado: str,
+    modo: str,
+    cedente: str | None = None,
+) -> None:
+    fim = _parse_data_base(str(resultado.get("data_ref_iso") or resultado.get("data_ref") or ""))
+    hoje = date.today()
+    if hoje <= fim:
+        return
+    tot = _kpis_sacado_em(sacado, hoje, modo=modo, cedente=cedente)
+    resultado["kpis_hoje"] = {
+        "data": _br(hoje),
+        "data_iso": hoje.isoformat(),
+        "face": tot["face"],
+        "vp": tot["vp"],
+        "vencido": tot["vencido"],
+        "pdd": tot["pdd"],
+    }
+
+
 def montar_extrato_sacado(
     sacado: str,
     data_base: str,
     *,
     modo: str = "motor",
+    cedente: str | None = None,
 ) -> dict[str, Any]:
     """
     Evolução diária da posição do sacado até a data base.
@@ -321,17 +463,22 @@ def montar_extrato_sacado(
 
     from extrato_sacado_cache import extrato_do_cache
 
-    em_cache = extrato_do_cache(sacado, data_base, modo=modo)
+    em_cache = None if cedente else extrato_do_cache(sacado, data_base, modo=modo)
     if em_cache is not None:
+        _anexar_kpis_hoje(em_cache, sacado=sacado, modo=modo, cedente=cedente)
         return em_cache
 
-    resultado = _montar_extrato_sacado_live(sacado, data_base, modo=modo)
+    resultado = _montar_extrato_sacado_live(
+        sacado, data_base, modo=modo, cedente=cedente
+    )
     try:
         from extrato_sacado_cache import gravar_extrato_modo
 
-        gravar_extrato_modo(sacado, data_base, modo, resultado)
+        if not cedente:
+            gravar_extrato_modo(sacado, data_base, modo, resultado)
     except OSError:
         pass
+    _anexar_kpis_hoje(resultado, sacado=sacado, modo=modo, cedente=cedente)
     return resultado
 
 
@@ -340,6 +487,7 @@ def _montar_extrato_sacado_live(
     data_base: str,
     *,
     modo: str = "motor",
+    cedente: str | None = None,
 ) -> dict[str, Any]:
     acumular = modo in ("juros_pos_venc", "juros-pos-venc", "2")
     fim = _parse_data_base(data_base)
@@ -352,10 +500,12 @@ def _montar_extrato_sacado_live(
         _carregar_eventos,
     )
 
-    estado = _estoque_inicial_sacado(alvo)
+    estado = _estoque_inicial_sacado(alvo, cedente=cedente)
     chaves_iniciais = set(estado)
     todos_eventos = _carregar_eventos(desde=DATA_MINIMA)
-    eventos = _eventos_do_sacado(todos_eventos, alvo, chaves_iniciais=chaves_iniciais)
+    eventos = _eventos_do_sacado(
+        todos_eventos, alvo, chaves_iniciais=chaves_iniciais, cedente=cedente
+    )
 
     inicio = _primeira_data_sacado_filtrado(eventos, estado, alvo) or DATA_MINIMA
     if inicio > fim:

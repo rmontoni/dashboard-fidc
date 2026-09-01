@@ -92,6 +92,49 @@ type VencimentosResp = {
     vp_hoje: number
     valor_liquidacao: number
   }>
+  projecao_hoje?: {
+    data_valoracao: string
+    data_valoracao_br: string
+    amortizacao_hoje: {
+      data: string
+      data_iso: string
+      valor_liquidacao: number
+      vp: number
+      n_parcelas: number
+      n_cotistas: number
+    }
+  }
+}
+
+type DetalheVencimentoResp = {
+  data_vencimento: string
+  data_vencimento_iso: string
+  data_valoracao: string
+  totais: {
+    aplicado: number
+    vp: number
+    valor_liquidacao: number
+    n_parcelas: number
+    n_cotistas: number
+  }
+  por_cotista: Array<{
+    cotista_id: number
+    nome: string
+    documento: string
+    aplicado: number
+    vp: number
+    valor_liquidacao: number
+    parcelas: Array<{
+      classe: string
+      chamada_numero: number
+      ordem: number
+      rotulo: string
+      liquidada: boolean
+      valor_original: number
+      valor_presente: number
+      valor_liquidacao: number
+    }>
+  }>
 }
 
 type CotistaLista = { id: number; nome: string; documento: string }
@@ -221,6 +264,9 @@ function Passivo({ dataBase: dataBaseProp }: PassivoProps) {
   const [aba, setAba] = useState<AbaPassivo>('classes')
   const [erro, setErro] = useState<string | null>(null)
   const [carregando, setCarregando] = useState(false)
+  const [vencimentoSel, setVencimentoSel] = useState<string | null>(null)
+  const [detalheVencimento, setDetalheVencimento] = useState<DetalheVencimentoResp | null>(null)
+  const [carregandoDetalhe, setCarregandoDetalhe] = useState(false)
 
   const dataSelecionada = datasDetalhe.find((d) => d.data === dataBase)
   const mapaDatas = new Map(datasDetalhe.map((d) => [d.data_iso, d]))
@@ -447,6 +493,56 @@ function Passivo({ dataBase: dataBaseProp }: PassivoProps) {
     }
   }, [dataBase, cotistaId, classeIdsParam, aba])
 
+  const hojeIso = useMemo(() => {
+    const h = new Date()
+    const y = h.getFullYear()
+    const m = String(h.getMonth() + 1).padStart(2, '0')
+    const d = String(h.getDate()).padStart(2, '0')
+    return `${y}-${m}-${d}`
+  }, [])
+
+  const linhasVencimento = useMemo(() => {
+    const base = vencimentos?.por_data ?? []
+    const hoje = vencimentos?.projecao_hoje?.amortizacao_hoje
+    if (!hoje || base.some((d) => d.data_iso === hoje.data_iso)) return base
+    return [
+      ...base,
+      {
+        data: hoje.data,
+        data_iso: hoje.data_iso,
+        status: 'aberto',
+        n: hoje.n_parcelas,
+        aplicado: 0,
+        vp_hoje: hoje.vp,
+        valor_liquidacao: hoje.valor_liquidacao,
+      },
+    ].sort((a, b) => a.data_iso.localeCompare(b.data_iso))
+  }, [vencimentos])
+
+  async function abrirDetalheVencimento(dataIso: string) {
+    if (!dataBase) return
+    setVencimentoSel(dataIso)
+    setCarregandoDetalhe(true)
+    setDetalheVencimento(null)
+    try {
+      const qs = new URLSearchParams({
+        dataBase,
+        dataVencimento: dataIso,
+      })
+      const res = await fetch(`${API_BASE}/fidc/passivo/vencimentos/detalhe?${qs}`)
+      const json = await res.json()
+      if (!res.ok) {
+        setDetalheVencimento(null)
+        return
+      }
+      setDetalheVencimento(json as DetalheVencimentoResp)
+    } catch {
+      setDetalheVencimento(null)
+    } finally {
+      setCarregandoDetalhe(false)
+    }
+  }
+
   const graficoExtratoCotista = useMemo(() => {
     if (!extratoCotista?.serie?.length) return []
     const comMovimento = extratoCotista.serie.filter(
@@ -653,6 +749,35 @@ function Passivo({ dataBase: dataBaseProp }: PassivoProps) {
 
       {aba === 'vencimentos' && (
         <>
+          {vencimentos?.projecao_hoje?.amortizacao_hoje && (
+            <div className="banner-status banner-data passivo-amort-hoje">
+              <strong>Amortização hoje ({vencimentos.projecao_hoje.amortizacao_hoje.data})</strong>
+              {' — '}
+              {formatarMoeda(vencimentos.projecao_hoje.amortizacao_hoje.valor_liquidacao)}
+              {' · '}
+              {vencimentos.projecao_hoje.amortizacao_hoje.n_parcelas} parcela(s),{' '}
+              {vencimentos.projecao_hoje.amortizacao_hoje.n_cotistas} cotista(s)
+              {' · '}
+              Valorado em {vencimentos.projecao_hoje.data_valoracao_br}
+              {vencimentos.projecao_hoje.amortizacao_hoje.n_parcelas > 0 && (
+                <>
+                  {' '}
+                  <button
+                    type="button"
+                    className="link-btn"
+                    onClick={() =>
+                      void abrirDetalheVencimento(
+                        vencimentos.projecao_hoje!.amortizacao_hoje.data_iso,
+                      )
+                    }
+                  >
+                    Ver cotistas
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+
           {vencimentos?.kpis && (
             <div className="painel-totais passivo-kpis">
               <div className="painel-total">
@@ -729,6 +854,7 @@ function Passivo({ dataBase: dataBaseProp }: PassivoProps) {
 
           <section className="painel">
             <h2>Por data de vencimento</h2>
+            <p className="subtitulo">Clique na data para ver os cotistas amortizados.</p>
             <div className="tabela-scroll">
               <table className="tabela-passivo">
                 <thead>
@@ -742,9 +868,18 @@ function Passivo({ dataBase: dataBaseProp }: PassivoProps) {
                   </tr>
                 </thead>
                 <tbody>
-                  {(vencimentos?.por_data ?? []).map((d) => (
-                    <tr key={d.data_iso} className={`status-parcela-${d.status}`}>
-                      <td>{d.data}</td>
+                  {(linhasVencimento ?? []).map((d) => (
+                    <tr
+                      key={d.data_iso}
+                      className={`linha-clicavel status-parcela-${d.status}${
+                        vencimentoSel === d.data_iso ? ' linha-selecionada' : ''
+                      }${d.data_iso === hojeIso ? ' linha-hoje' : ''}`}
+                      onClick={() => void abrirDetalheVencimento(d.data_iso)}
+                    >
+                      <td>
+                        {d.data}
+                        {d.data_iso === hojeIso ? ' (hoje)' : ''}
+                      </td>
                       <td>{d.status}</td>
                       <td>{d.n}</td>
                       <td>{formatarMoeda(d.aplicado)}</td>
@@ -755,6 +890,66 @@ function Passivo({ dataBase: dataBaseProp }: PassivoProps) {
                 </tbody>
               </table>
             </div>
+
+            {carregandoDetalhe && (
+              <p className="vazio passivo-detalhe-vencimento">Carregando cotistas…</p>
+            )}
+
+            {detalheVencimento && !carregandoDetalhe && (
+              <div className="passivo-detalhe-vencimento">
+                <h3>
+                  Cotistas — vencimento {detalheVencimento.data_vencimento}
+                  <span className="muted-line">
+                    {' '}
+                    (valorado em {detalheVencimento.data_valoracao})
+                  </span>
+                </h3>
+                <div className="painel-totais passivo-kpis">
+                  <div className="painel-total">
+                    <span>Liquidação</span>
+                    <strong>{formatarMoeda(detalheVencimento.totais.valor_liquidacao)}</strong>
+                  </div>
+                  <div className="painel-total">
+                    <span>VP</span>
+                    <strong>{formatarMoeda(detalheVencimento.totais.vp)}</strong>
+                  </div>
+                  <div className="painel-total">
+                    <span>Cotistas</span>
+                    <strong>{detalheVencimento.totais.n_cotistas}</strong>
+                  </div>
+                </div>
+                <div className="tabela-scroll">
+                  <table className="tabela-passivo">
+                    <thead>
+                      <tr>
+                        <th>Cotista</th>
+                        <th>Classe / chamada</th>
+                        <th>Parcela</th>
+                        <th>Status</th>
+                        <th>Na liquidação</th>
+                        <th>VP</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {detalheVencimento.por_cotista.flatMap((c) =>
+                        c.parcelas.map((p, idx) => (
+                          <tr key={`${c.cotista_id}-${p.ordem}-${idx}`}>
+                            <td>{idx === 0 ? c.nome : ''}</td>
+                            <td>
+                              {p.classe} · #{p.chamada_numero}
+                            </td>
+                            <td>{p.rotulo}</td>
+                            <td>{p.liquidada ? 'Liquidada' : 'Aberta'}</td>
+                            <td>{formatarMoeda(p.valor_liquidacao)}</td>
+                            <td>{formatarMoeda(p.valor_presente)}</td>
+                          </tr>
+                        )),
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </section>
         </>
       )}
