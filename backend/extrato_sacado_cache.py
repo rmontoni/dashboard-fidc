@@ -16,7 +16,7 @@ from carteira_movimentacoes import CACHE_PATH, META_PATH, _assinatura_estoques_b
 
 CACHE_DIR = Path(__file__).resolve().parent / "data" / "extrato_sacado"
 # Incrementar quando a lógica do extrato mudar (invalida JSONs antigos).
-CACHE_ENGINE_VERSAO = "3"
+CACHE_ENGINE_VERSAO = "4"
 
 ProgressoFn = Callable[[str, int, int], None]
 
