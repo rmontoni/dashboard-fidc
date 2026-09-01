@@ -16,7 +16,7 @@ from carteira_movimentacoes import CACHE_PATH, META_PATH, _assinatura_estoques_b
 
 CACHE_DIR = Path(__file__).resolve().parent / "data" / "extrato_sacado"
 # Incrementar quando a lógica do extrato mudar (invalida JSONs antigos).
-CACHE_ENGINE_VERSAO = "4"
+CACHE_ENGINE_VERSAO = "5"
 
 ProgressoFn = Callable[[str, int, int], None]
 
@@ -80,10 +80,47 @@ def _carregar_sacado_cache(sacado: str) -> dict[str, Any] | None:
     return raw if isinstance(raw, dict) else None
 
 
-def _cache_sacado_valido(bruto: dict[str, Any], fim: date) -> bool:
+def _ultima_data_serie(bloco: dict[str, Any] | None) -> date | None:
+    if not bloco:
+        return None
+    datas: list[date] = []
+    for ponto in bloco.get("serie") or []:
+        raw = str(ponto.get("data") or "")[:10]
+        try:
+            datas.append(date.fromisoformat(raw))
+        except ValueError:
+            continue
+    return max(datas) if datas else None
+
+
+def _merge_serie(
+    antiga: list[dict[str, Any]],
+    nova: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Une séries por data; pontos da série nova prevalecem no mesmo dia."""
+    por_data: dict[str, dict[str, Any]] = {}
+    for ponto in antiga:
+        chave = str(ponto.get("data") or "")
+        if chave:
+            por_data[chave] = ponto
+    for ponto in nova:
+        chave = str(ponto.get("data") or "")
+        if chave:
+            por_data[chave] = ponto
+    return [por_data[chave] for chave in sorted(por_data)]
+
+
+def _cache_sacado_valido(bruto: dict[str, Any], fim: date, *, modo: str) -> bool:
     if str(bruto.get("engine") or "") != CACHE_ENGINE_VERSAO:
         return False
     if str(bruto.get("assinatura") or "") != assinatura_fontes():
+        return False
+    chave = _normalizar_modo(modo)
+    bloco = bruto.get(chave)
+    if not isinstance(bloco, dict) or not bloco.get("serie"):
+        return False
+    ultima = _ultima_data_serie(bloco)
+    if ultima is None or ultima < fim:
         return False
     cache_ref = str(bruto.get("data_ref_iso") or "")
     if cache_ref and fim.isoformat() > cache_ref:
@@ -148,7 +185,7 @@ def extrato_do_cache(sacado: str, data_base: str, *, modo: str = "motor") -> dic
         return None
 
     fim = _parse_data_base(data_base)
-    if not _cache_sacado_valido(bruto, fim):
+    if not _cache_sacado_valido(bruto, fim, modo=modo):
         return None
 
     chave = _normalizar_modo(modo)
@@ -175,9 +212,12 @@ def gravar_extrato_modo(
         "assinatura": assinatura_fontes(),
         "engine": CACHE_ENGINE_VERSAO,
     }
-    ref_atual = str(bruto.get("data_ref_iso") or "")
-    if not ref_atual or data_ref.isoformat() >= ref_atual:
-        bruto["data_ref_iso"] = data_ref.isoformat()
+    bloco_ant = bruto.get(chave) if isinstance(bruto.get(chave), dict) else None
+    antiga_serie = (bloco_ant or {}).get("serie") or []
+    nova_serie = resultado.get("serie") or []
+    serie = _merge_serie(antiga_serie, nova_serie)
+    ultima = _ultima_data_serie({"serie": serie})
+    bruto["data_ref_iso"] = (ultima or data_ref).isoformat()
     bruto["assinatura"] = assinatura_fontes()
     bruto["engine"] = CACHE_ENGINE_VERSAO
     if resultado.get("inicio_iso"):
@@ -185,7 +225,7 @@ def gravar_extrato_modo(
     bruto[chave] = {
         "modo": chave,
         "modo_label": resultado.get("modo_label"),
-        "serie": resultado.get("serie") or [],
+        "serie": serie,
     }
     _persistir_json(path, bruto)
 

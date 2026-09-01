@@ -158,41 +158,6 @@ def _marcar_subset_sacado(
     return out
 
 
-def _normalizar_tipo_recebivel(tipo: object) -> str:
-    import unicodedata
-
-    texto = str(tipo or "")
-    return (
-        unicodedata.normalize("NFKD", texto)
-        .encode("ascii", "ignore")
-        .decode("ascii")
-        .upper()
-        .strip()
-    )
-
-
-def _eh_confissao_divida(pos: dict[str, Any]) -> bool:
-    tipo = _normalizar_tipo_recebivel(pos.get("tipo_recebivel"))
-    return "CONFISSAO DE DIVIDA" in tipo
-
-
-def _sacado_so_confissao(marcado: dict[str, dict[str, Any]]) -> bool:
-    if not marcado:
-        return False
-    return all(_eh_confissao_divida(pos) for pos in marcado.values())
-
-
-def _sacado_em_atraso(
-    marcado: dict[str, dict[str, Any]],
-    data_alvo: date,
-) -> bool:
-    for pos in marcado.values():
-        venc = _parse_data_simples(pos.get("data_vencimento"))
-        if venc is not None and data_alvo > venc:
-            return True
-    return False
-
-
 def _totais_sacado_marcado(
     marcado: dict[str, dict[str, Any]],
     data_alvo: date | None = None,
@@ -201,23 +166,12 @@ def _totais_sacado_marcado(
 ) -> dict[str, float]:
     face = vp = pdd = vencido = 0.0
     n = len(marcado)
-    em_atraso = False
-    so_confissao = False
-    if data_alvo is not None:
-        em_atraso = _sacado_em_atraso(marcado, data_alvo)
-        so_confissao = _sacado_so_confissao(marcado)
-    contagion = em_atraso and so_confissao
     for pos in marcado.values():
         face += float(pos.get("valor_face") or 0)
         vp += float(pos.get("vl_presente_adm") or 0)
         pdd += float(pos.get("vl_pdd") or 0)
         if data_alvo is not None:
-            vencido += _vencido_posicao(
-                pos,
-                data_alvo,
-                acumular=acumular,
-                confissao_contagion=contagion,
-            )
+            vencido += _vencido_posicao(pos, data_alvo, acumular=acumular)
     return {
         "face": round(face, 2),
         "vp": round(vp, 2),
@@ -232,18 +186,9 @@ def _vencido_posicao(
     data_alvo: date,
     *,
     acumular: bool,
-    confissao_contagion: bool = False,
 ) -> float:
-    """Parcela vencida: face (sem juros pós-venc) ou VP (com juros pós-venc).
-
-    Confissão de dívida (sacado 100% confissão): se há qualquer parcela em atraso,
-    todo o saldo aberto entra como vencido (aceleração do saldo renegociado).
-    """
+    """Parcela vencida: face (sem juros pós-venc) ou VP (com juros pós-venc)."""
     venc = _parse_data_simples(pos.get("data_vencimento"))
-    if confissao_contagion and _eh_confissao_divida(pos):
-        if acumular:
-            return money_half_up(float(pos.get("vl_presente_adm") or 0))
-        return money_half_up(float(pos.get("valor_face") or 0))
     if venc is None or data_alvo <= venc:
         return 0.0
     if acumular:
