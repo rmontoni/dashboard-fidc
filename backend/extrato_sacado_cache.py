@@ -1,4 +1,8 @@
-"""Cache de extratos sacado — gerado em ``atualizar_bases`` após a série diária."""
+"""Cache sob demanda de extratos sacado (grava ao abrir na API).
+
+Pré-cálculo em massa (``reconstruir_cache``) é opcional e limitado — com milhares
+de sacados o replay diário por sacado não escala para rodar no atualizar_bases.
+"""
 
 from __future__ import annotations
 
@@ -10,7 +14,6 @@ from typing import Any, Callable
 
 from carteira_movimentacoes import CACHE_PATH, META_PATH, _assinatura_estoques_bdr
 
-INDEX_PATH = Path(__file__).resolve().parent / "data" / "extrato_sacado_index.json"
 CACHE_DIR = Path(__file__).resolve().parent / "data" / "extrato_sacado"
 
 ProgressoFn = Callable[[str, int, int], None]
@@ -57,58 +60,11 @@ def assinatura_fontes() -> str:
     return "|".join(partes)
 
 
-def _carregar_index() -> dict[str, Any] | None:
-    if not INDEX_PATH.exists():
-        return None
-    try:
-        raw = json.loads(INDEX_PATH.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, TypeError):
-        return None
-    return raw if isinstance(raw, dict) else None
-
-
-def cache_atualizado(data_ref: date) -> bool:
-    idx = _carregar_index()
-    if not idx:
-        return False
-    if str(idx.get("data_ref_iso") or "") != data_ref.isoformat():
-        return False
-    return str(idx.get("assinatura") or "") == assinatura_fontes()
-
-
 def _persistir_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
     tmp.replace(path)
-
-
-def _salvar_sacado(
-    sacado: str,
-    data_ref: date,
-    *,
-    motor: dict[str, Any],
-    juros_pos_venc: dict[str, Any],
-) -> str:
-    slug = slug_sacado(sacado)
-    path = CACHE_DIR / f"{slug}.json"
-    payload = {
-        "sacado": sacado.strip(),
-        "data_ref_iso": data_ref.isoformat(),
-        "inicio_iso": motor.get("inicio_iso") or juros_pos_venc.get("inicio_iso"),
-        "motor": {
-            "modo": "motor",
-            "modo_label": motor.get("modo_label"),
-            "serie": motor.get("serie") or [],
-        },
-        "juros_pos_venc": {
-            "modo": "juros_pos_venc",
-            "modo_label": juros_pos_venc.get("modo_label"),
-            "serie": juros_pos_venc.get("serie") or [],
-        },
-    }
-    _persistir_json(path, payload)
-    return slug
 
 
 def _carregar_sacado_cache(sacado: str) -> dict[str, Any] | None:
@@ -120,6 +76,15 @@ def _carregar_sacado_cache(sacado: str) -> dict[str, Any] | None:
     except (OSError, json.JSONDecodeError, TypeError):
         return None
     return raw if isinstance(raw, dict) else None
+
+
+def _cache_sacado_valido(bruto: dict[str, Any], fim: date) -> bool:
+    if str(bruto.get("assinatura") or "") != assinatura_fontes():
+        return False
+    cache_ref = str(bruto.get("data_ref_iso") or "")
+    if cache_ref and fim.isoformat() > cache_ref:
+        return False
+    return True
 
 
 def _fatia_resposta(
@@ -171,93 +136,90 @@ def _fatia_resposta(
 
 
 def extrato_do_cache(sacado: str, data_base: str, *, modo: str = "motor") -> dict[str, Any] | None:
-    idx = _carregar_index()
-    if not idx:
-        return None
-    if str(idx.get("assinatura") or "") != assinatura_fontes():
-        return None
-
-    fim = _parse_data_base(data_base)
-    cache_ref = str(idx.get("data_ref_iso") or "")
-    if cache_ref and fim.isoformat() > cache_ref:
-        return None
-
+    """Lê cache por sacado (sem índice global)."""
     bruto = _carregar_sacado_cache(sacado)
     if not bruto:
         return None
 
+    fim = _parse_data_base(data_base)
+    if not _cache_sacado_valido(bruto, fim):
+        return None
+
     chave = _normalizar_modo(modo)
     bloco = bruto.get(chave)
-    if not isinstance(bloco, dict):
+    if not isinstance(bloco, dict) or not bloco.get("serie"):
         return None
     return _fatia_resposta(bruto, bloco, fim)
 
 
-def sacados_do_cache(data_base: str) -> dict[str, Any] | None:
-    idx = _carregar_index()
-    if not idx:
-        return None
-    if str(idx.get("assinatura") or "") != assinatura_fontes():
-        return None
-
-    ref = _parse_data_base(data_base)
-    cache_ref = str(idx.get("data_ref_iso") or "")
-    if cache_ref and ref.isoformat() > cache_ref:
-        return None
-
-    sacados = list(idx.get("sacados") or [])
-    if cache_ref and ref.isoformat() < cache_ref:
-        # Lista do índice reflete posição na data do cache; datas anteriores recalculam.
-        return None
-
-    return {
-        "data_ref": _br(ref),
-        "data_ref_iso": ref.isoformat(),
-        "sacados": sacados,
-        "cache": True,
+def gravar_extrato_modo(
+    sacado: str,
+    data_base: str,
+    modo: str,
+    resultado: dict[str, Any],
+) -> None:
+    """Persiste um modo após cálculo ao vivo (cache incremental)."""
+    data_ref = _parse_data_base(data_base)
+    chave = _normalizar_modo(modo)
+    path = CACHE_DIR / f"{slug_sacado(sacado)}.json"
+    bruto = _carregar_sacado_cache(sacado) or {
+        "sacado": sacado.strip(),
+        "data_ref_iso": data_ref.isoformat(),
+        "inicio_iso": resultado.get("inicio_iso"),
+        "assinatura": assinatura_fontes(),
     }
+    ref_atual = str(bruto.get("data_ref_iso") or "")
+    if not ref_atual or data_ref.isoformat() >= ref_atual:
+        bruto["data_ref_iso"] = data_ref.isoformat()
+    bruto["assinatura"] = assinatura_fontes()
+    if resultado.get("inicio_iso"):
+        bruto["inicio_iso"] = resultado.get("inicio_iso")
+    bruto[chave] = {
+        "modo": chave,
+        "modo_label": resultado.get("modo_label"),
+        "serie": resultado.get("serie") or [],
+    }
+    _persistir_json(path, bruto)
 
 
 def reconstruir_cache(
     data_ref: date,
     *,
     forcar: bool = False,
+    limite: int | None = None,
     progresso: ProgressoFn | None = None,
 ) -> dict[str, Any]:
-    """Pré-calcula extrato (motor + juros pós-venc) de todos os sacados abertos."""
+    """
+    Pré-calcula extratos para os sacados com maior VP (uso manual).
+
+    ``limite`` é obrigatório — sem limite o job não inicia (evita dias de CPU).
+    """
     from extrato_sacado import _listar_sacados_live, _montar_extrato_sacado_live
 
-    if not forcar and cache_atualizado(data_ref):
-        idx = _carregar_index() or {}
+    if limite is None or limite <= 0:
         return {
-            "ok": True,
-            "pulado": True,
-            "data_ref": data_ref.isoformat(),
-            "sacados": len(idx.get("sacados") or []),
-            "mensagem": "cache já atualizado para a série",
+            "ok": False,
+            "erro": (
+                "Informe --limite N (ex.: 50). Pré-cálculo de todos os sacados "
+                "não é viável — use cache sob demanda na API."
+            ),
         }
 
     data_br = _br(data_ref) or data_ref.isoformat()
     lista = _listar_sacados_live(data_br)
-    sacados = list(lista.get("sacados") or [])
+    sacados = list(lista.get("sacados") or [])[:limite]
     if not sacados:
-        payload_index = {
-            "atualizado_em": _agora_iso(),
-            "data_ref_iso": data_ref.isoformat(),
-            "assinatura": assinatura_fontes(),
-            "sacados": [],
-        }
-        _persistir_json(INDEX_PATH, payload_index)
         return {"ok": True, "data_ref": data_ref.isoformat(), "sacados": 0, "gerados": 0}
 
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    for antigo in CACHE_DIR.glob("*.json"):
-        try:
-            antigo.unlink()
-        except OSError:
-            pass
+    if forcar:
+        for slug in {slug_sacado(str(s.get("sacado") or "")) for s in sacados}:
+            path = CACHE_DIR / f"{slug}.json"
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
-    index_rows: list[dict[str, Any]] = []
     erros: list[dict[str, str]] = []
     total = len(sacados)
 
@@ -270,30 +232,16 @@ def reconstruir_cache(
         try:
             motor = _montar_extrato_sacado_live(nome, data_br, modo="motor")
             juros = _montar_extrato_sacado_live(nome, data_br, modo="juros_pos_venc")
-            arquivo = _salvar_sacado(
-                nome,
-                data_ref,
-                motor=motor,
-                juros_pos_venc=juros,
-            )
-            index_rows.append({**row, "arquivo": arquivo})
+            gravar_extrato_modo(nome, data_br, "motor", motor)
+            gravar_extrato_modo(nome, data_br, "juros_pos_venc", juros)
         except Exception as exc:  # noqa: BLE001
             erros.append({"sacado": nome, "erro": str(exc)})
-
-    index_rows.sort(key=lambda s: (-float(s.get("vp") or 0), str(s.get("sacado") or "")))
-    payload_index = {
-        "atualizado_em": _agora_iso(),
-        "data_ref_iso": data_ref.isoformat(),
-        "assinatura": assinatura_fontes(),
-        "sacados": index_rows,
-    }
-    _persistir_json(INDEX_PATH, payload_index)
 
     return {
         "ok": len(erros) == 0,
         "data_ref": data_ref.isoformat(),
-        "sacados": len(index_rows),
-        "gerados": len(index_rows),
+        "limite": limite,
+        "gerados": total - len(erros),
         "erros": erros,
         "pulado": False,
     }
@@ -306,12 +254,22 @@ def main() -> None:
     from atualizacoes import _ultima_data_serie
 
     parser = argparse.ArgumentParser(
-        description="Reconstrói cache de extratos sacado (motor + juros pós-venc).",
+        description=(
+            "Pré-calcula extratos dos sacados com maior VP (manual). "
+            "O cache normal é sob demanda ao abrir na API."
+        ),
     )
     parser.add_argument(
         "--forcar",
         action="store_true",
-        help="Reconstrói mesmo se o cache já estiver atualizado.",
+        help="Apaga cache dos sacados selecionados antes de recalcular.",
+    )
+    parser.add_argument(
+        "--limite",
+        type=int,
+        default=50,
+        metavar="N",
+        help="Quantos sacados (por VP) pré-calcular (padrão: 50).",
     )
     parser.add_argument(
         "--data",
@@ -331,8 +289,16 @@ def main() -> None:
     def progresso(sacado: str, atual: int, total: int) -> None:
         print(f"[{atual}/{total}] {sacado}", file=sys.stderr)
 
-    print(f"Reconstruindo cache extrato sacado até {data_ref.isoformat()}…", file=sys.stderr)
-    resultado = reconstruir_cache(data_ref, forcar=args.forcar, progresso=progresso)
+    print(
+        f"Pré-cálculo extrato sacado: top {args.limite} até {data_ref.isoformat()}…",
+        file=sys.stderr,
+    )
+    resultado = reconstruir_cache(
+        data_ref,
+        forcar=args.forcar,
+        limite=args.limite,
+        progresso=progresso,
+    )
     print(json.dumps(resultado, ensure_ascii=False, indent=2))
     raise SystemExit(0 if resultado.get("ok") else 1)
 

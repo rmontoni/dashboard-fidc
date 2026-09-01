@@ -98,13 +98,7 @@ def _listar_sacados_live(data_base: str) -> dict[str, Any]:
 
 
 def listar_sacados(data_base: str) -> dict[str, Any]:
-    """Sacados com posição aberta na data base (cache ou motor)."""
-    from extrato_sacado_cache import sacados_do_cache
-
-    em_cache = sacados_do_cache(data_base)
-    if em_cache is not None:
-        return em_cache
-
+    """Sacados com posição aberta na data base (motor)."""
     return _listar_sacados_live(data_base)
 
 
@@ -286,7 +280,14 @@ def montar_extrato_sacado(
     if em_cache is not None:
         return em_cache
 
-    return _montar_extrato_sacado_live(sacado, data_base, modo=modo)
+    resultado = _montar_extrato_sacado_live(sacado, data_base, modo=modo)
+    try:
+        from extrato_sacado_cache import gravar_extrato_modo
+
+        gravar_extrato_modo(sacado, data_base, modo, resultado)
+    except OSError:
+        pass
+    return resultado
 
 
 def _montar_extrato_sacado_live(
