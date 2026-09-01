@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
+import type { UsuarioSessao } from './auth'
+import UsuariosConfig from './UsuariosConfig'
 import type { Fundo } from './types'
 import { API_BASE } from './types'
 
@@ -42,7 +44,7 @@ const CHAMADA_VAZIA = {
   credito_vp: '0',
 }
 
-type AbaConfig = 'fundos' | 'classes' | 'cotistas' | 'chamadas' | 'pd'
+type AbaConfig = 'fundos' | 'classes' | 'cotistas' | 'chamadas' | 'pd' | 'usuarios'
 
 type ParametrosPd = {
   pd_min_consignado: number
@@ -87,11 +89,13 @@ type ChamadaRow = {
 type ConfiguracoesProps = {
   fundoSelecionadoId: number | null
   onSelecionarFundo: (fundo: Fundo) => void
+  usuarioLogado: UsuarioSessao
 }
 
 export default function Configuracoes({
   fundoSelecionadoId,
   onSelecionarFundo,
+  usuarioLogado,
 }: ConfiguracoesProps) {
   const [aba, setAba] = useState<AbaConfig>('fundos')
   const [fundos, setFundos] = useState<Fundo[]>([])
@@ -561,7 +565,10 @@ export default function Configuracoes({
             ['cotistas', 'Cotistas'],
             ['chamadas', 'Chamadas'],
             ['pd', 'PD estimada'],
-          ] as const
+            ...(usuarioLogado.perfil === 'admin'
+              ? ([['usuarios', 'Usuários']] as const)
+              : []),
+          ] as readonly [AbaConfig, string][]
         ).map(([id, rotulo]) => (
           <button
             key={id}
@@ -1211,6 +1218,10 @@ export default function Configuracoes({
             </section>
           </div>
         </>
+      )}
+
+      {aba === 'usuarios' && usuarioLogado.perfil === 'admin' && (
+        <UsuariosConfig usuarioLogado={usuarioLogado} />
       )}
 
       {aba === 'pd' && (

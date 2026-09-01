@@ -25,10 +25,13 @@ type SacadoItem = {
 type PontoExtrato = {
   data: string
   label: string
+  aquisicao: number
   face: number
+  juros: number
+  liquidacao: number
   vp: number
+  vencido: number
   pdd: number
-  n_titulos: number
 }
 
 type RespostaExtrato = {
@@ -38,7 +41,15 @@ type RespostaExtrato = {
   modo_label: string
   inicio: string | null
   serie: PontoExtrato[]
-  kpis: { face: number; vp: number; pdd: number; n_titulos: number }
+  kpis: {
+    face: number
+    vp: number
+    vencido: number
+    pdd: number
+    aquisicao?: number
+    juros?: number
+    liquidacao?: number
+  }
 }
 
 const STORAGE_DATA_BASE = 'fidc_data_base'
@@ -49,6 +60,14 @@ function formatarMoeda(valor: number | null | undefined): string {
     currency: 'BRL',
     maximumFractionDigits: 2,
   })
+}
+
+function celulaFluxo(valor: number): string {
+  return valor > 0 ? formatarMoeda(valor) : '—'
+}
+
+function celulaJuros(valor: number): string {
+  return Math.abs(valor) >= 0.01 ? formatarMoeda(valor) : '—'
 }
 
 function Extrato() {
@@ -287,12 +306,12 @@ function Extrato() {
               <strong>{formatarMoeda(extrato.kpis.vp)}</strong>
             </div>
             <div className="painel-total">
-              <span>PDD</span>
-              <strong>{formatarMoeda(extrato.kpis.pdd)}</strong>
+              <span>Vencido</span>
+              <strong>{formatarMoeda(extrato.kpis.vencido)}</strong>
             </div>
             <div className="painel-total">
-              <span>Títulos</span>
-              <strong>{extrato.kpis.n_titulos}</strong>
+              <span>PDD</span>
+              <strong>{formatarMoeda(extrato.kpis.pdd)}</strong>
             </div>
           </div>
         )}
@@ -360,6 +379,15 @@ function Extrato() {
               />
               <Line
                 type="monotone"
+                dataKey="vencido"
+                name="Vencido"
+                stroke="#dc2626"
+                strokeWidth={1.5}
+                dot={false}
+                isAnimationActive={false}
+              />
+              <Line
+                type="monotone"
                 dataKey="face"
                 name="Face"
                 stroke="#9a3412"
@@ -386,20 +414,26 @@ function Extrato() {
                 <thead>
                   <tr>
                     <th>Data</th>
+                    <th>Aquisição</th>
                     <th>Face</th>
+                    <th>Juros</th>
+                    <th>Liquidações</th>
                     <th>VP</th>
+                    <th>Vencido</th>
                     <th>PDD</th>
-                    <th>Títulos</th>
                   </tr>
                 </thead>
                 <tbody>
                   {[...extrato.serie].reverse().map((row) => (
                     <tr key={row.data}>
                       <td>{row.data.split('-').reverse().join('/')}</td>
+                      <td>{celulaFluxo(row.aquisicao)}</td>
                       <td>{formatarMoeda(row.face)}</td>
+                      <td>{celulaJuros(row.juros)}</td>
+                      <td>{celulaFluxo(row.liquidacao)}</td>
                       <td>{formatarMoeda(row.vp)}</td>
+                      <td>{formatarMoeda(row.vencido ?? 0)}</td>
                       <td>{formatarMoeda(row.pdd)}</td>
-                      <td>{row.n_titulos}</td>
                     </tr>
                   ))}
                 </tbody>

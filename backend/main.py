@@ -1,11 +1,12 @@
 import os
 import time
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel, Field
 
+from auth import exigir_admin, exigir_usuario
 from conciliacao import (
     ATRASO_DIAS_UTEIS,
     conciliar_estoque_existente,
@@ -89,6 +90,27 @@ class PdParametrosBody(BaseModel):
     redutor: float = Field(ge=0, le=10)
 
 
+class LoginBody(BaseModel):
+    username: str
+    senha: str
+
+
+class UsuarioCreateBody(BaseModel):
+    nome: str
+    username: str
+    senha: str
+    perfil: str = "usuario"
+    ativo: bool = True
+
+
+class UsuarioUpdateBody(BaseModel):
+    nome: str | None = None
+    username: str | None = None
+    senha: str | None = None
+    perfil: str | None = None
+    ativo: bool | None = None
+
+
 @app.get("/health")
 def health():
     return {
@@ -98,6 +120,82 @@ def health():
         "pl_completo": True,
         "nota": "PL = DC + CC Saldo + Aplicações + Provisões (CPR/taxas)",
     }
+
+
+@app.post("/fidc/auth/login")
+def post_auth_login(body: LoginBody):
+    from auth import criar_token
+    from usuarios import autenticar
+
+    user = autenticar(body.username, body.senha)
+    if not user:
+        raise HTTPException(status_code=401, detail="Usuário ou senha inválidos.")
+    token = criar_token(user)
+    return {"token": token, "usuario": user}
+
+
+@app.get("/fidc/auth/me")
+def get_auth_me(usuario: dict = Depends(exigir_usuario)):
+    return {"usuario": usuario}
+
+
+@app.get("/fidc/usuarios")
+def get_usuarios(_admin: dict = Depends(exigir_admin)):
+    from usuarios import listar_usuarios
+
+    return {"usuarios": listar_usuarios()}
+
+
+@app.post("/fidc/usuarios", status_code=201)
+def post_usuario(body: UsuarioCreateBody, _admin: dict = Depends(exigir_admin)):
+    from usuarios import criar_usuario
+
+    try:
+        return criar_usuario(
+            nome=body.nome,
+            username=body.username,
+            senha=body.senha,
+            perfil=body.perfil,
+            ativo=body.ativo,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.patch("/fidc/usuarios/{usuario_id}")
+def patch_usuario(
+    usuario_id: int,
+    body: UsuarioUpdateBody,
+    _admin: dict = Depends(exigir_admin),
+):
+    from usuarios import atualizar_usuario
+
+    try:
+        return atualizar_usuario(
+            usuario_id,
+            nome=body.nome,
+            username=body.username,
+            senha=body.senha,
+            perfil=body.perfil,
+            ativo=body.ativo,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.delete("/fidc/usuarios/{usuario_id}", status_code=204)
+def delete_usuario(usuario_id: int, _admin: dict = Depends(exigir_admin)):
+    from usuarios import excluir_usuario
+
+    try:
+        excluir_usuario(usuario_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return None
 
 
 @app.get("/fidc/fundos")

@@ -16,7 +16,7 @@ from carteira_movimentacoes import CACHE_PATH, META_PATH, _assinatura_estoques_b
 
 CACHE_DIR = Path(__file__).resolve().parent / "data" / "extrato_sacado"
 # Incrementar quando a lógica do extrato mudar (invalida JSONs antigos).
-CACHE_ENGINE_VERSAO = "2"
+CACHE_ENGINE_VERSAO = "3"
 
 ProgressoFn = Callable[[str, int, int], None]
 
@@ -104,6 +104,7 @@ def _fatia_resposta(
         else {
             "face": 0.0,
             "vp": 0.0,
+            "vencido": 0.0,
             "pdd": 0.0,
             "aquisicao": 0.0,
             "juros": 0.0,
@@ -130,6 +131,7 @@ def _fatia_resposta(
         "kpis": {
             "face": ultimo.get("face", 0.0),
             "vp": ultimo.get("vp", 0.0),
+            "vencido": ultimo.get("vencido", 0.0),
             "pdd": ultimo.get("pdd", 0.0),
             "aquisicao": ultimo.get("aquisicao", 0.0),
             "juros": ultimo.get("juros", 0.0),

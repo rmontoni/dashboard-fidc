@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react'
+import { carregarSessao, logout } from './auth'
+import type { UsuarioSessao } from './auth'
 import Configuracoes from './Configuracoes'
 import Dashboard from './Dashboard'
 import Divergencias from './Divergencias'
 import Extrato from './Extrato'
 import FluxoCaixa from './FluxoCaixa'
 import Inadimplencia from './Inadimplencia'
+import Login from './Login'
 import Passivo from './Passivo'
 import Pdd from './Pdd'
 import type { Fundo } from './types'
@@ -69,6 +72,8 @@ function paginaInicial(): Pagina {
 }
 
 function App() {
+  const [usuario, setUsuario] = useState<UsuarioSessao | null>(null)
+  const [authCarregando, setAuthCarregando] = useState(true)
   const [pagina, setPaginaState] = useState<Pagina>(paginaInicial)
   const [fundo, setFundo] = useState<Fundo | null>(null)
   const [menuAberto, setMenuAberto] = useState(true)
@@ -94,6 +99,20 @@ function App() {
 
   useEffect(() => {
     let cancelado = false
+    void carregarSessao().then((sessao) => {
+      if (!cancelado) {
+        setUsuario(sessao)
+        setAuthCarregando(false)
+      }
+    })
+    return () => {
+      cancelado = true
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!usuario) return
+    let cancelado = false
     async function bootstrap() {
       try {
         const res = await fetch(`${API_BASE}/fidc/fundos?ativos=true`)
@@ -115,7 +134,12 @@ function App() {
     return () => {
       cancelado = true
     }
-  }, [])
+  }, [usuario])
+
+  function sair() {
+    logout()
+    setUsuario(null)
+  }
 
   async function carregarAtualizacoes() {
     try {
@@ -220,12 +244,26 @@ function App() {
     statusAtualizacao?.etapa ||
     statusAtualizacao?.etapas?.find((e) => e.status === 'running')?.label
 
+  if (authCarregando) {
+    return (
+      <div className="login-page">
+        <div className="login-card login-card-loading">
+          <p className="eyebrow">Legatus FIDC</p>
+          <p>Carregando…</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (!usuario) {
+    return <Login onSucesso={setUsuario} />
+  }
+
   return (
     <div className={`shell ${menuAberto ? 'shell-menu-aberto' : 'shell-menu-fechado'}`}>
       <aside className="sidebar">
         <div className="sidebar-brand">
-          <span className="sidebar-eyebrow">Legatus</span>
-          <strong>FIDC Risk</strong>
+          <strong className="sidebar-marca">Legatus FIDC</strong>
         </div>
         <nav className="sidebar-nav">
           <button
@@ -357,6 +395,13 @@ function App() {
             <small>{fundo.cnpj_formatado || fundo.cnpj}</small>
           </div>
         )}
+        <div className="sidebar-usuario">
+          <span>{usuario.nome}</span>
+          <small>@{usuario.username}</small>
+          <button type="button" className="sidebar-sair-btn" onClick={sair}>
+            Sair
+          </button>
+        </div>
         <button
           type="button"
           className="sidebar-toggle"
@@ -378,6 +423,7 @@ function App() {
           <Configuracoes
             fundoSelecionadoId={fundo?.id ?? null}
             onSelecionarFundo={selecionarFundo}
+            usuarioLogado={usuario}
           />
         )}
         {pagina === 'divergencias' && <Divergencias />}

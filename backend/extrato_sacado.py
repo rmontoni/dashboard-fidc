@@ -158,19 +158,42 @@ def _marcar_subset_sacado(
     return out
 
 
-def _totais_sacado_marcado(marcado: dict[str, dict[str, Any]]) -> dict[str, float]:
-    face = vp = pdd = 0.0
+def _totais_sacado_marcado(
+    marcado: dict[str, dict[str, Any]],
+    data_alvo: date | None = None,
+    *,
+    acumular: bool = False,
+) -> dict[str, float]:
+    face = vp = pdd = vencido = 0.0
     n = len(marcado)
     for pos in marcado.values():
         face += float(pos.get("valor_face") or 0)
         vp += float(pos.get("vl_presente_adm") or 0)
         pdd += float(pos.get("vl_pdd") or 0)
+        if data_alvo is not None:
+            vencido += _vencido_posicao(pos, data_alvo, acumular=acumular)
     return {
         "face": round(face, 2),
         "vp": round(vp, 2),
+        "vencido": round(vencido, 2),
         "pdd": round(pdd, 2),
         "n_titulos": n,
     }
+
+
+def _vencido_posicao(
+    pos: dict[str, Any],
+    data_alvo: date,
+    *,
+    acumular: bool,
+) -> float:
+    """Parcela vencida: face (sem juros pós-venc) ou VP (com juros pós-venc)."""
+    venc = _parse_data_simples(pos.get("data_vencimento"))
+    if venc is None or data_alvo <= venc:
+        return 0.0
+    if acumular:
+        return money_half_up(float(pos.get("vl_presente_adm") or 0))
+    return money_half_up(float(pos.get("valor_face") or 0))
 
 
 def _estoque_inicial_sacado(alvo: str) -> dict[str, dict[str, Any]]:
@@ -374,7 +397,7 @@ def _montar_extrato_sacado_live(
         _aplicar_repactuacoes(estado, d)
 
         marcado = _marcar_subset_sacado(estado, d, acumular=acumular)
-        tot = _totais_sacado_marcado(marcado)
+        tot = _totais_sacado_marcado(marcado, d, acumular=acumular)
         if tot["n_titulos"] > 0 or serie:
             serie.append(
                 {
@@ -385,6 +408,7 @@ def _montar_extrato_sacado_live(
                     "juros": juros,
                     "liquidacao": liquidacao,
                     "vp": tot["vp"],
+                    "vencido": tot["vencido"],
                     "pdd": tot["pdd"],
                 }
             )
@@ -397,6 +421,7 @@ def _montar_extrato_sacado_live(
         else {
             "face": 0.0,
             "vp": 0.0,
+            "vencido": 0.0,
             "pdd": 0.0,
             "aquisicao": 0.0,
             "juros": 0.0,
@@ -419,6 +444,7 @@ def _montar_extrato_sacado_live(
         "kpis": {
             "face": ultimo["face"],
             "vp": ultimo["vp"],
+            "vencido": ultimo.get("vencido", 0.0),
             "pdd": ultimo["pdd"],
             "aquisicao": ultimo.get("aquisicao", 0.0),
             "juros": ultimo.get("juros", 0.0),
