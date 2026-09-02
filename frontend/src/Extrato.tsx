@@ -87,6 +87,18 @@ function celulaJuros(valor: number): string {
   return Math.abs(valor) >= 0.01 ? formatarMoeda(valor) : '—'
 }
 
+function normalizarBusca(texto: string): string {
+  return texto
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .toLowerCase()
+    .trim()
+}
+
+function compararNomes(a: string, b: string): number {
+  return a.localeCompare(b, 'pt-BR', { sensitivity: 'base' })
+}
+
 function Extrato() {
   const [dataBase, setDataBase] = useState(
     () => localStorage.getItem(STORAGE_DATA_BASE) || '',
@@ -101,6 +113,7 @@ function Extrato() {
   const [cedenteSel, setCedenteSel] = useState('')
   const [sacados, setSacados] = useState<SacadoItem[]>([])
   const [sacadoSel, setSacadoSel] = useState('')
+  const [buscaSacado, setBuscaSacado] = useState('')
   const [modo, setModo] = useState<'motor' | 'juros_pos_venc'>('motor')
   const [extrato, setExtrato] = useState<RespostaExtrato | null>(null)
   const [carregando, setCarregando] = useState(false)
@@ -111,6 +124,26 @@ function Extrato() {
     [datasDetalhe],
   )
   const dataSelecionada = datasDetalhe.find((d) => d.data === dataBase)
+
+  const cedentesOrdenados = useMemo(
+    () => [...cedentes].sort((a, b) => compararNomes(a.cedente, b.cedente)),
+    [cedentes],
+  )
+
+  const sacadosOrdenados = useMemo(
+    () => [...sacados].sort((a, b) => compararNomes(a.sacado, b.sacado)),
+    [sacados],
+  )
+
+  const sacadosFiltrados = useMemo(() => {
+    const termo = normalizarBusca(buscaSacado)
+    if (!termo) return sacadosOrdenados
+    return sacadosOrdenados.filter((s) => {
+      const nome = normalizarBusca(s.sacado)
+      const doc = normalizarBusca(s.doc_sacado ?? '')
+      return nome.includes(termo) || doc.includes(termo)
+    })
+  }, [sacadosOrdenados, buscaSacado])
 
   useEffect(() => {
     let cancelado = false
@@ -171,9 +204,11 @@ function Extrato() {
         setCedentes((json.cedentes ?? []) as CedenteItem[])
         const lista = (json.sacados ?? []) as SacadoItem[]
         setSacados(lista)
+        setBuscaSacado('')
         setSacadoSel((atual) => {
-          if (atual && lista.some((s) => s.sacado === atual)) return atual
-          return lista[0]?.sacado ?? ''
+          const ordenada = [...lista].sort((a, b) => compararNomes(a.sacado, b.sacado))
+          if (atual && ordenada.some((s) => s.sacado === atual)) return atual
+          return ordenada[0]?.sacado ?? ''
         })
       } catch {
         if (!cancelado) {
@@ -288,25 +323,43 @@ function Extrato() {
             <select
               value={cedenteSel}
               onChange={(e) => setCedenteSel(e.target.value)}
-              disabled={cedentes.length === 0}
+              disabled={cedentesOrdenados.length === 0}
             >
               <option value="">Todos</option>
-              {cedentes.map((c) => (
+              {cedentesOrdenados.map((c) => (
                 <option key={c.cedente} value={c.cedente}>
                   {c.cedente} — VP {formatarMoeda(c.vp)}
                 </option>
               ))}
             </select>
           </label>
-          <label className="select-cotista">
-            Sacado
+          <div className="select-cotista extrato-sacado-filtro">
+            <label htmlFor="extrato-busca-sacado">Sacado</label>
+            <input
+              id="extrato-busca-sacado"
+              type="search"
+              className="extrato-busca-sacado"
+              placeholder="Buscar por nome ou documento…"
+              value={buscaSacado}
+              onChange={(e) => setBuscaSacado(e.target.value)}
+              disabled={sacadosOrdenados.length === 0}
+              autoComplete="off"
+            />
             <select
-              value={sacadoSel}
+              value={
+                sacadosFiltrados.some((s) => s.sacado === sacadoSel) ? sacadoSel : ''
+              }
               onChange={(e) => setSacadoSel(e.target.value)}
-              disabled={sacados.length === 0}
+              disabled={sacadosFiltrados.length === 0}
             >
-              {sacados.length === 0 && <option value="">Sem sacados</option>}
-              {sacados.map((s) => (
+              {sacadosFiltrados.length === 0 && (
+                <option value="">
+                  {sacadosOrdenados.length === 0
+                    ? 'Sem sacados'
+                    : 'Nenhum sacado na busca'}
+                </option>
+              )}
+              {sacadosFiltrados.map((s) => (
                 <option key={s.sacado} value={s.sacado}>
                   {s.sacado}
                   {s.doc_sacado ? ` (${s.doc_sacado})` : ''} — VP{' '}
@@ -314,7 +367,12 @@ function Extrato() {
                 </option>
               ))}
             </select>
-          </label>
+            {buscaSacado.trim() && sacadosFiltrados.length > 0 && (
+              <span className="extrato-busca-contagem">
+                {sacadosFiltrados.length} de {sacadosOrdenados.length}
+              </span>
+            )}
+          </div>
 
           <div className="extrato-modos" role="group" aria-label="Modo de marcação">
             <span className="extrato-modos-label">Marcação</span>

@@ -1344,6 +1344,30 @@ td.alerta-pct {
   gap: 16px;
 }
 
+.extrato-sacado-filtro {
+  min-width: 280px;
+}
+
+.extrato-busca-sacado {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: inherit;
+  color: var(--ink);
+  background: #fff;
+  width: 100%;
+}
+
+.extrato-busca-sacado:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.extrato-busca-contagem {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
 .extrato-modos {
   display: flex;
   flex-wrap: wrap;
