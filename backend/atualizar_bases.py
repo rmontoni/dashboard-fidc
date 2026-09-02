@@ -103,26 +103,38 @@ def _job_expirado(estado: dict[str, Any]) -> bool:
     return (datetime.now(timezone.utc) - started).total_seconds() > 45 * 60
 
 
+def _marcar_job_expirado(estado: dict[str, Any]) -> dict[str, Any]:
+    return {
+        **estado,
+        "status": "erro",
+        "terminado_em": _agora_iso(),
+        "erro": (
+            "Atualização expirou após 45 min (provável travamento). "
+            "Tente novamente; use o backend local para rebuild completo se persistir."
+        ),
+    }
+
+
+def _sincronizar_estado_disco(*, persistir_expirado: bool = True) -> dict[str, Any] | None:
+    """Carrega status do disco; expira jobs ``running`` antigos."""
+    disco = _carregar_estado_disco()
+    if disco is None:
+        return None
+    if _job_expirado(disco):
+        disco = _marcar_job_expirado(disco)
+        if persistir_expirado:
+            _estado.clear()
+            _estado.update(_estado_padrao())
+            _estado.update(disco)
+            _persistir_estado_unlocked()
+    return disco
+
+
 def status_job() -> dict[str, Any]:
     with _lock:
-        disco = _carregar_estado_disco()
+        disco = _sincronizar_estado_disco()
         if disco is not None:
-            if _job_expirado(disco):
-                disco = {
-                    **disco,
-                    "status": "erro",
-                    "terminado_em": _agora_iso(),
-                    "erro": (
-                        "Atualização expirou após 45 min (provável travamento na "
-                        "série). Tente novamente; use o backend local para rebuild "
-                        "completo se persistir."
-                    ),
-                }
-                _estado.clear()
-                _estado.update(_estado_padrao())
-                _estado.update(disco)
-                _persistir_estado_unlocked()
-            elif disco.get("status") == "running" or _estado.get("status") != "running":
+            if disco.get("status") == "running" or _estado.get("status") != "running":
                 _estado.clear()
                 _estado.update(_estado_padrao())
                 _estado.update(disco)
@@ -582,7 +594,7 @@ def iniciar_atualizacao() -> dict[str, Any]:
         }
     with _lock:
         atual = dict(_estado)
-        disco = _carregar_estado_disco()
+        disco = _sincronizar_estado_disco()
         if disco is not None:
             atual = disco
         if atual.get("status") == "running":
@@ -617,7 +629,7 @@ def executar_atualizacao_bloqueante(*, forcar: bool = False) -> int:
         return 2
     with _lock:
         atual = dict(_estado)
-        disco = _carregar_estado_disco()
+        disco = _sincronizar_estado_disco()
         if disco is not None:
             atual = disco
         if not forcar and atual.get("status") == "running":
