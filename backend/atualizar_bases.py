@@ -24,6 +24,9 @@ from dateutil.relativedelta import relativedelta
 MEZ_IV_DESDE = date(2026, 6, 23)
 MEZ_IV_ID = 34691304
 
+# Início das movimentações BDR carregadas na etapa anterior (para cache incremental).
+_BDR_INICIO_INCREMENTAL: date | None = None
+
 _STATUS_PATH = Path(__file__).resolve().parent / "data" / "atualizar_job_status.json"
 
 
@@ -210,16 +213,20 @@ def _etapa_classes(fim: date) -> dict[str, Any]:
 
 
 def _etapa_bdr_mov(fim: date) -> dict[str, Any]:
+    global _BDR_INICIO_INCREMENTAL
+
     from carregar_movimentacoes_bdr import (
         carregar_periodo,
         max_periodo_carregado,
         resolver_fundo,
     )
 
+    _BDR_INICIO_INCREMENTAL = None
     fundo = resolver_fundo(None)
     cnpj = str(fundo["cnpj"])
     tp = str(fundo.get("bdr_tp_contabil_mov") or "A")
     resumos: list[dict[str, Any]] = []
+    inicios_novos: list[date] = []
     for tipo in ("aquisicoes", "liquidacoes"):
         ultimo = max_periodo_carregado(tipo, cnpj)  # type: ignore[arg-type]
         inicio = (ultimo + timedelta(days=1)) if ultimo else fim - relativedelta(months=1)
@@ -236,18 +243,38 @@ def _etapa_bdr_mov(fim: date) -> dict[str, Any]:
             tp_contabil=tp,
         )
         resumos.append(resumo)
-    return {"resumos": resumos}
+        if int(resumo.get("linhas") or 0) > 0 or int(resumo.get("meses") or 0) > 0:
+            inicios_novos.append(inicio)
+    if inicios_novos:
+        _BDR_INICIO_INCREMENTAL = min(inicios_novos)
+    return {
+        "resumos": resumos,
+        "inicio_incremental": (
+            _BDR_INICIO_INCREMENTAL.isoformat() if _BDR_INICIO_INCREMENTAL else None
+        ),
+    }
 
 
 def _etapa_eventos() -> dict[str, Any]:
-    from carteira_movimentacoes import reconstruir_eventos
+    from carteira_movimentacoes import CACHE_PATH, META_PATH, reconstruir_eventos
 
-    # Rebuild completo após movimentações BDR — evita cache defasado (D-2 / upsert tardio).
-    meta = reconstruir_eventos(forcar=True)
+    if not CACHE_PATH.exists():
+        meta = reconstruir_eventos(forcar=True)
+    elif _BDR_INICIO_INCREMENTAL is None:
+        try:
+            meta = json.loads(META_PATH.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, TypeError):
+            meta = reconstruir_eventos(forcar=True)
+        meta = {**(meta or {}), "pulado": True, "motivo": "sem movimentações novas no BDR"}
+    else:
+        from atualizar_eventos_desde import atualizar_eventos
+
+        meta = atualizar_eventos(_BDR_INICIO_INCREMENTAL)
+        meta = {**(meta or {}), "pulado": False}
     try:
         from aquisicoes_volume import reconstruir_cache
 
-        reconstruir_cache(forcar=True)
+        reconstruir_cache(forcar=False)
         meta = {**(meta or {}), "aquisicoes_agg_cache": "ok"}
     except Exception as exc:  # noqa: BLE001
         meta = {**(meta or {}), "aquisicoes_agg_cache": f"erro: {exc}"}
@@ -352,7 +379,6 @@ def _etapa_pdfs_sub(fim: date) -> dict[str, Any]:
 def _etapa_serie() -> dict[str, Any]:
     from atualizacoes import _parse_iso, _ultima_data_serie
     from carteira_movimentacoes import (
-        DATA_MINIMA,
         mapa_dc_bdr_diario,
         reconstruir_serie_diaria,
     )
@@ -390,23 +416,24 @@ def _etapa_serie() -> dict[str, Any]:
             {"fase": fase, **{k: info.get(k) for k in info}},
         )
 
-    # Série existente: atualização incremental (só remarca a partir de `desde`).
+    # Série existente: incremental a partir da última data conciliada.
     if len(serie) > 0 and ultima_serie is not None:
         from atualizar_serie_desde import atualizar_desde
 
-        desde = max(DATA_MINIMA, ultima_serie - timedelta(days=14))
-        payload = atualizar_desde(desde, progresso=progresso)
+        payload = atualizar_desde(progresso=progresso)
         por_dia = (payload.get("por_dia") or {}) if isinstance(payload, dict) else {}
         ultima_pos = _ultima_data_serie()
         ok = ultima_pos is not None and (alvo is None or ultima_pos >= alvo)
         return {
             "ok": ok,
             "dias": len(por_dia),
+            "dias_novos": payload.get("dias_novos"),
             "ultima": ultima_pos.isoformat() if ultima_pos else None,
             "alvo_d2": alvo.isoformat(),
             "pulado": False,
-            "modo": "incremental",
-            "desde": desde.isoformat(),
+            "modo": payload.get("modo"),
+            "ultima_conciliada": payload.get("ultima_conciliada"),
+            "inicio_escrita": payload.get("inicio_escrita"),
             "mensagem": None
             if ok
             else (

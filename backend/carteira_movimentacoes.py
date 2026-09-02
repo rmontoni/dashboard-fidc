@@ -24,6 +24,10 @@ from marcacao_carteira import money_half_up
 CACHE_PATH = Path(__file__).resolve().parent / "data" / "carteira_mov_eventos.jsonl"
 META_PATH = Path(__file__).resolve().parent / "data" / "carteira_mov_meta.json"
 DIARIO_PATH = Path(__file__).resolve().parent / "data" / "carteira_mov_diario.json"
+MOTOR_ESTADO_PATH = (
+    Path(__file__).resolve().parent / "data" / "motor_estado_conciliado.json"
+)
+MOTOR_ESTADO_VERSAO = "1"
 PRAZO_PATH = Path(__file__).resolve().parent / "data" / "carteira_prazo_bdr.json"
 RELATORIOS_DIR = Path(__file__).resolve().parent / "data" / "relatorios"
 # Estoque BDR de abertura do dashboard (snapshot); movimentos anteriores são descartados.
@@ -991,6 +995,79 @@ def _idsf_do_dia(data_ref: date) -> dict[str, float]:
         "pdd_idsf": round(pdd, 2),
         "dc_liquido_idsf": round(liquido, 2),
     }
+
+
+def ultima_data_conciliada_serie() -> date | None:
+    """Último dia da série com ``conciliada`` verdadeiro (imutável)."""
+    datas: list[date] = []
+    for iso, row in mapa_dc_bdr_diario().items():
+        if not bool(row.get("conciliada")):
+            continue
+        d = _parse_data_campo(iso)
+        if d is not None:
+            datas.append(d)
+    return max(datas) if datas else None
+
+
+def gravar_estado_conciliado(
+    data_ref: date,
+    marcado: dict[str, dict[str, Any]],
+) -> None:
+    """Persiste posição marcada no fim de um dia conciliado (base do incremental)."""
+    limpos: dict[str, dict[str, Any]] = {}
+    for chave, pos in marcado.items():
+        copia = {k: v for k, v in pos.items() if not str(k).startswith("_")}
+        limpos[str(chave)] = copia
+    payload = {
+        "versao": MOTOR_ESTADO_VERSAO,
+        "data_iso": data_ref.isoformat(),
+        "gravado_em": datetime.now(timezone.utc)
+        .isoformat(timespec="seconds")
+        .replace("+00:00", "Z"),
+        "estado": limpos,
+    }
+    MOTOR_ESTADO_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp = MOTOR_ESTADO_PATH.with_suffix(".tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(MOTOR_ESTADO_PATH)
+
+
+def carregar_estado_conciliado() -> tuple[date, dict[str, dict[str, Any]]] | None:
+    if not MOTOR_ESTADO_PATH.exists():
+        return None
+    try:
+        raw = json.loads(MOTOR_ESTADO_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError):
+        return None
+    if str(raw.get("versao") or "") != MOTOR_ESTADO_VERSAO:
+        return None
+    data = _parse_data_campo(raw.get("data_iso"))
+    estado = raw.get("estado")
+    if data is None or not isinstance(estado, dict):
+        return None
+    abertos = {str(k): dict(v) for k, v in estado.items() if isinstance(v, dict)}
+    return data, abertos
+
+
+def reconstruir_estado_ate(data_limite: date) -> dict[str, dict[str, Any]]:
+    """Bootstrap pontual da posição marcada (só quando snapshot ainda não existe)."""
+    from marcacao_carteira import atualizar_marcacao
+
+    eventos = _carregar_eventos(desde=DATA_MINIMA, ate=data_limite)
+    estado = carregar_estoque_base()
+    if eventos:
+        estado = _aplicar_eventos_ate(eventos, data_limite, base=estado)
+    _aplicar_repactuacoes(estado, data_limite)
+    if data_limite == DATA_MINIMA:
+        return {k: dict(v) for k, v in estado.items()}
+    snapshot = {k: dict(v) for k, v in estado.items()}
+    anexar_prazo_atual_do_dia(snapshot, data_limite)
+    marcado = atualizar_marcacao(
+        snapshot,
+        data_ref=DATA_MINIMA,
+        data_alvo=data_limite,
+    )
+    return {k: dict(v) for k, v in marcado.items()}
 
 
 def datas_util_serie_ate(fim: date | None = None) -> list[str]:
