@@ -142,8 +142,8 @@ function Dashboard({ fundoNome }: DashboardProps) {
 
   function aplicarDatas(detalhe: DataBaseDetalhe[], preferirAtual = false) {
     setDatasDetalhe(detalhe)
-    // Última data disponível: conciliada, ou com liquidez IDSF (dados existem).
-    const disponiveis = detalhe.filter((d) => d.status === 'ok' || d.conciliada || d.tem_liquidez)
+    // Sempre a última data disponível no motor (status ok / conciliada).
+    const disponiveis = detalhe.filter((d) => d.status === 'ok' || d.conciliada)
     const ultima =
       (disponiveis.length > 0 ? disponiveis : detalhe).at(-1) ?? null
     if (preferirAtual) {
