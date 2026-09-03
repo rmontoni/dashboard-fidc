@@ -1,4 +1,5 @@
 import os
+import threading
 import time
 
 from fastapi import Depends, FastAPI, HTTPException, Query
@@ -19,6 +20,29 @@ from fundos import atualizar_fundo, criar_fundo, listar_fundos, obter_fundo
 from risco import calcular_pl_liquidez, calcular_risco_fidc
 
 app = FastAPI(title="API Risco FIDC", version="1.0.0")
+
+
+def _preaquecer() -> None:
+    """Pré-aquece o cache do risco na última data conciliada (roda em background no startup)."""
+    try:
+        import time as _time
+        _time.sleep(3)  # aguarda uvicorn terminar de subir
+        from conciliacao import data_base_maxima, listar_datas_detalhe
+        detalhe = listar_datas_detalhe()
+        conciliadas = [d for d in detalhe if d.get("conciliada")]
+        if not conciliadas:
+            return
+        ultima = conciliadas[-1]["data"]
+        t0 = _time.perf_counter()
+        out = calcular_risco_fidc(ultima)
+        if isinstance(out, dict) and not out.get("erro"):
+            _RISCO_CACHE[ultima] = (_time.monotonic(), out)
+        print(f"[warmup] risco {ultima} em {_time.perf_counter()-t0:.1f}s", flush=True)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[warmup] erro: {exc}", flush=True)
+
+
+threading.Thread(target=_preaquecer, daemon=True, name="warmup-risco").start()
 
 
 def _origens_cors() -> list[str]:
