@@ -148,9 +148,9 @@ function Dashboard({ fundoNome }: DashboardProps) {
       (disponiveis.length > 0 ? disponiveis : detalhe).at(-1) ?? null
     if (preferirAtual) {
       setDataBaseFiltro((atual) => {
-        if (atual && detalhe.some((d) => d.data === atual)) return atual
+        if (atual && detalhe.some((d) => d.data === atual && (d.status === 'ok' || d.conciliada))) return atual
         const salvo = localStorage.getItem('fidc_data_base') || ''
-        if (salvo && detalhe.some((d) => d.data === salvo)) return salvo
+        if (salvo && detalhe.some((d) => d.data === salvo && (d.status === 'ok' || d.conciliada))) return salvo
         const proxima = ultima?.data ?? ''
         if (proxima) localStorage.setItem('fidc_data_base', proxima)
         return proxima
