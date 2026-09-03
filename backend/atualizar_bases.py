@@ -464,9 +464,62 @@ def _etapa_serie() -> dict[str, Any]:
     }
 
 
+def _reconciliar_conciliacao_serie() -> dict[str, Any]:
+    """Recalcula o campo 'conciliada' na série para dias recentes marcados como DIV.
+
+    Quando a série incremental roda sem ter o EstoqueBDR do dia (ex: salto de prazo),
+    o delta fica alto e o dia fica marcado como não-conciliado. Após o job baixar o
+    estoque e a liquidez IDSF, recalcula ao vivo e corrige o campo no JSON.
+    """
+    import json as _json
+    from carteira_movimentacoes import DIARIO_PATH, mapa_dc_bdr_diario
+    from db import mapa_liquidez_diario
+    from conciliacao import TOLERANCIA_DC_ABS, data_base_maxima
+    from carteira_movimentacoes import dc_bdr_conciliado
+
+    serie = dict(mapa_dc_bdr_diario())
+    liq = mapa_liquidez_diario()
+    alvo = data_base_maxima()
+    corrigidos = 0
+
+    for iso, row in serie.items():
+        if bool(row.get("conciliada")):
+            continue  # já ok, não mexer
+        try:
+            d = date.fromisoformat(iso)
+        except ValueError:
+            continue
+        if d > alvo:
+            continue
+        liq_row = liq.get(iso)
+        if not liq_row:
+            continue
+        dc_idsf = float(liq_row.get("dc_idsf") or 0)
+        if not dc_idsf:
+            continue
+        conc = dc_bdr_conciliado(d, dc_idsf)
+        if conc.get("conciliada_idsf") and not conc.get("sem_snapshot"):
+            serie[iso]["conciliada"] = 1.0
+            serie[iso]["delta_vp_limpo"] = conc.get("delta_dc_limpo", conc.get("delta_dc", 0))
+            serie[iso]["delta_pdd_limpo"] = conc.get("delta_pdd_limpo", conc.get("delta_pdd", 0))
+            corrigidos += 1
+
+    if corrigidos:
+        raw = _json.loads(DIARIO_PATH.read_text(encoding="utf-8"))
+        raw["por_dia"].update(serie)
+        tmp = DIARIO_PATH.with_suffix(".tmp")
+        tmp.write_text(_json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(DIARIO_PATH)
+
+    return {"corrigidos": corrigidos}
+
+
 def _etapa_cobertura() -> dict[str, Any]:
     """Verifica lacunas vs política; tenta estender série se atrás da IDSF."""
     from politica_atualizacao import verificar_cobertura
+
+    # Reconcilia dias que ficaram DIV por falta de estoque BDR no momento da série
+    reconciliados = _reconciliar_conciliacao_serie()
 
     cobertura = verificar_cobertura()
     retentativas: list[dict[str, Any]] = []
@@ -481,6 +534,7 @@ def _etapa_cobertura() -> dict[str, Any]:
         "ok": bool(cobertura.get("ok")),
         "cobertura": cobertura,
         "retentativas": retentativas,
+        "reconciliados": reconciliados,
     }
 
 

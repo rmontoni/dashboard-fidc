@@ -436,6 +436,16 @@ def post_cancelar_atualizacao():
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@app.post("/fidc/atualizar/reconciliar", dependencies=[Depends(exigir_admin)])
+def post_reconciliar():
+    """Recalcula campo 'conciliada' na série para dias marcados incorretamente como DIV."""
+    try:
+        from atualizar_bases import _reconciliar_conciliacao_serie
+        return _reconciliar_conciliacao_serie()
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 @app.get("/fidc/consignado")
 def get_consignado(
     dataBase: str = Query(..., description="Data base dd/mm/yyyy ou YYYY-MM-DD"),
