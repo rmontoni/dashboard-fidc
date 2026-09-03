@@ -193,7 +193,7 @@ export default function Pdd() {
                 conciliada: true,
               }))
         setDatasDetalhe(detalhe)
-        const disponiveis = detalhe.filter((d) => d.status === 'ok' || d.conciliada)
+        const disponiveis = detalhe.filter((d) => d.status === 'ok' || d.conciliada || d.tem_liquidez)
         const ultima = (disponiveis.length ? disponiveis : detalhe).at(-1) ?? null
         setDataBase((atual) => {
           if (atual && detalhe.some((d) => d.data === atual)) return atual
