@@ -476,9 +476,17 @@ def _classe_from_row(row: dict[str, Any]) -> Classe:
 
 
 def carregar_fatorador(hoje: date) -> FatorCDI:
-    """Prefere CDI do passivo_alpha.db (paridade com Alpha); senão BCB."""
+    """CDI para o fatorador de VP das mezaninos.
+
+    Estratégia: lê o SQLite do Alpha (paridade histórica) e completa datas
+    mais novas com o cdi_cache.json atualizado pelo job diário (BCB SGS-12).
+    Assim o fatorador nunca fica congelado na última carga do Alpha.
+    """
     from passivo_cadastro import _sqlite_path
 
+    mapa: dict[date, float] = {}
+
+    # 1. SQLite do Alpha (fonte primária, pode estar desatualizado)
     path = _sqlite_path()
     if path and path.exists():
         import sqlite3
@@ -491,17 +499,27 @@ def carregar_fatorador(hoje: date) -> FatorCDI:
             rows = []
         finally:
             conn.close()
-        if rows:
-            mapa = {
-                date.fromisoformat(str(r["data"])[:10]): float(r["taxa"]) for r in rows
-            }
-            return FatorCDI(mapa)
+        for r in rows:
+            try:
+                mapa[date.fromisoformat(str(r["data"])[:10])] = float(r["taxa"])
+            except (ValueError, TypeError):
+                pass
 
-    inicio = date(2021, 1, 1)
-    mapa = mapa_cdi(inicio, hoje + timedelta(days=5), atualizar=False)
-    if not mapa:
-        mapa = mapa_cdi(inicio, hoje + timedelta(days=5), atualizar=True)
-    return FatorCDI(mapa)
+    # 2. Completa / estende com o cache BCB (cdi_cache.json) — cobre datas novas
+    max_sqlite = max(mapa) if mapa else date(2000, 1, 1)
+    inicio_bcb = date(2021, 1, 1)
+    bcb = mapa_cdi(inicio_bcb, hoje + timedelta(days=5), atualizar=False)
+    if not bcb:
+        bcb = mapa_cdi(inicio_bcb, hoje + timedelta(days=5), atualizar=True)
+    for d, taxa in bcb.items():
+        if d > max_sqlite:   # só sobrescreve onde o SQLite não tem dados
+            mapa[d] = taxa
+
+    if mapa:
+        return FatorCDI(mapa)
+
+    # Fallback: só BCB
+    return FatorCDI(bcb)
 
 
 def montar_todas_posicoes(

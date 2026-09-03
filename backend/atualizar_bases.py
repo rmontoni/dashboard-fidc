@@ -515,8 +515,10 @@ def _etapa_classes_meta() -> dict[str, Any]:
 def _etapa_cdi(fim: date) -> dict[str, Any]:
     from cdi_bcb import carregar
 
+    # CDI BCB publica com 1 dia útil de atraso — busca até hoje para garantir
+    # que o fatorador do passivo mez nunca congele no último dia do SQLite Alpha.
     try:
-        return {"ok": True, **carregar(fim=fim)}
+        return {"ok": True, **carregar(fim=date.today())}
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "erro": str(exc)}
 
