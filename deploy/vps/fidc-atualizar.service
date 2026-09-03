@@ -11,6 +11,7 @@ WorkingDirectory=/opt/dashboard-fidc/backend
 Environment=PYTHONUNBUFFERED=1
 EnvironmentFile=-/opt/dashboard-fidc/backend/.env
 ExecStart=/opt/dashboard-fidc/backend/.venv/bin/python atualizar_bases.py
+ExecStartPost=/bin/systemctl restart fidc-api
 Nice=5
 IOSchedulingClass=best-effort
 IOSchedulingPriority=7
