@@ -38,6 +38,27 @@ type RespostaVenc = {
   titulos: TituloVenc[]
 }
 
+type ColunaTitulo =
+  | 'data_vencimento_iso'
+  | 'sacado'
+  | 'cedente'
+  | 'documento'
+  | 'status'
+  | 'face'
+  | 'vp'
+  | 'pdd'
+
+const COLUNAS_TITULO: { id: ColunaTitulo; rotulo: string }[] = [
+  { id: 'data_vencimento_iso', rotulo: 'Vencimento' },
+  { id: 'sacado', rotulo: 'Sacado' },
+  { id: 'cedente', rotulo: 'Cedente' },
+  { id: 'documento', rotulo: 'Documento' },
+  { id: 'status', rotulo: 'Status' },
+  { id: 'face', rotulo: 'Face' },
+  { id: 'vp', rotulo: 'VP' },
+  { id: 'pdd', rotulo: 'PDD' },
+]
+
 const STORAGE_DATA_BASE = 'fidc_data_base'
 
 function formatarMoeda(valor: number | null | undefined): string {
@@ -77,6 +98,8 @@ function Vencimentos() {
   const [inicio, setInicio] = useState('')
   const [fim, setFim] = useState('')
   const [busca, setBusca] = useState('')
+  const [ordenarPor, setOrdenarPor] = useState<ColunaTitulo>('data_vencimento_iso')
+  const [ordenarDir, setOrdenarDir] = useState<'asc' | 'desc'>('asc')
   const [dados, setDados] = useState<RespostaVenc | null>(null)
   const [carregando, setCarregando] = useState(false)
   const [erro, setErro] = useState<string | null>(null)
@@ -191,13 +214,35 @@ function Vencimentos() {
 
   const termo = busca.trim().toLowerCase()
   const titulos = useMemo(() => {
-    const lista = dados?.titulos ?? []
-    if (!termo) return lista
-    return lista.filter((t) => {
-      const blob = `${t.documento} ${t.cedente} ${t.sacado} ${t.status}`.toLowerCase()
-      return blob.includes(termo)
+    let lista = dados?.titulos ?? []
+    if (termo) {
+      lista = lista.filter((t) => {
+        const blob = `${t.documento} ${t.cedente} ${t.sacado} ${t.status}`.toLowerCase()
+        return blob.includes(termo)
+      })
+    }
+    const sinal = ordenarDir === 'asc' ? 1 : -1
+    return [...lista].sort((a, b) => {
+      const va = a[ordenarPor]
+      const vb = b[ordenarPor]
+      if (typeof va === 'number' && typeof vb === 'number') {
+        return (va - vb) * sinal
+      }
+      return String(va || '').localeCompare(String(vb || ''), 'pt-BR', {
+        numeric: true,
+        sensitivity: 'base',
+      }) * sinal
     })
-  }, [dados, termo])
+  }, [dados, termo, ordenarPor, ordenarDir])
+
+  function clicarColuna(id: ColunaTitulo) {
+    if (ordenarPor === id) {
+      setOrdenarDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+      return
+    }
+    setOrdenarPor(id)
+    setOrdenarDir(id === 'face' || id === 'vp' || id === 'pdd' ? 'desc' : 'asc')
+  }
 
   return (
     <div className="dashboard">
@@ -332,14 +377,18 @@ function Vencimentos() {
             <table className="tabela-passivo">
               <thead>
                 <tr>
-                  <th>Vencimento</th>
-                  <th>Sacado</th>
-                  <th>Cedente</th>
-                  <th>Documento</th>
-                  <th>Status</th>
-                  <th>Face</th>
-                  <th>VP</th>
-                  <th>PDD</th>
+                  {COLUNAS_TITULO.map((col) => (
+                    <th key={col.id}>
+                      <button
+                        type="button"
+                        className="th-ordenar"
+                        onClick={() => clicarColuna(col.id)}
+                      >
+                        {col.rotulo}
+                        {ordenarPor === col.id ? (ordenarDir === 'asc' ? ' ↑' : ' ↓') : ''}
+                      </button>
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
