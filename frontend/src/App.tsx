@@ -10,6 +10,7 @@ import Inadimplencia from './Inadimplencia'
 import Login from './Login'
 import Passivo from './Passivo'
 import Pdd from './Pdd'
+import Vencimentos from './Vencimentos'
 import type { Fundo } from './types'
 import { API_BASE } from './types'
 import './App.css'
@@ -18,6 +19,7 @@ type Pagina =
   | 'dashboard'
   | 'passivo'
   | 'extrato'
+  | 'vencimentos'
   | 'pdd'
   | 'inadimplencia'
   | 'fluxo-caixa'
@@ -59,6 +61,7 @@ const PAGINAS: Pagina[] = [
   'dashboard',
   'passivo',
   'extrato',
+  'vencimentos',
   'pdd',
   'inadimplencia',
   'fluxo-caixa',
@@ -289,6 +292,13 @@ function App() {
           </button>
           <button
             type="button"
+            className={pagina === 'vencimentos' ? 'nav-item ativo' : 'nav-item'}
+            onClick={() => setPagina('vencimentos')}
+          >
+            Vencimentos
+          </button>
+          <button
+            type="button"
             className={pagina === 'pdd' ? 'nav-item ativo' : 'nav-item'}
             onClick={() => setPagina('pdd')}
           >
@@ -416,6 +426,7 @@ function App() {
         {pagina === 'dashboard' && <Dashboard fundoNome={fundo?.nome} />}
         {pagina === 'passivo' && <Passivo />}
         {pagina === 'extrato' && <Extrato />}
+        {pagina === 'vencimentos' && <Vencimentos />}
         {pagina === 'pdd' && <Pdd />}
         {pagina === 'inadimplencia' && <Inadimplencia />}
         {pagina === 'fluxo-caixa' && <FluxoCaixa />}

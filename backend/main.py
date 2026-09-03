@@ -664,6 +664,23 @@ def get_passivo_cotista_extrato(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@app.get("/fidc/vencimentos")
+def get_vencimentos_carteira(
+    dataBase: str = Query(..., description="Data base dd/mm/yyyy ou YYYY-MM-DD"),
+    inicio: str | None = Query(None, description="Início do intervalo de vencimento"),
+    fim: str | None = Query(None, description="Fim do intervalo de vencimento"),
+):
+    """Títulos abertos na data base com vencimento no intervalo."""
+    try:
+        from vencimentos_carteira import montar_vencimentos
+
+        return montar_vencimentos(dataBase, inicio=inicio, fim=fim)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 @app.get("/fidc/extrato/sacados")
 def get_extrato_sacados_lista(
     dataBase: str = Query(..., description="Data base dd/mm/yyyy ou YYYY-MM-DD"),

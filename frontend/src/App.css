@@ -1344,6 +1344,15 @@ td.alerta-pct {
   gap: 16px;
 }
 
+.select-cotista input[type='date'] {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: inherit;
+  color: var(--ink);
+  background: #fff;
+}
+
 .extrato-sacado-filtro {
   min-width: 280px;
 }
