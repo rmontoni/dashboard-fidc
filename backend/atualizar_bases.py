@@ -472,10 +472,9 @@ def _reconciliar_conciliacao_serie() -> dict[str, Any]:
     estoque e a liquidez IDSF, recalcula ao vivo e corrige o campo no JSON.
     """
     import json as _json
-    from carteira_movimentacoes import DIARIO_PATH, mapa_dc_bdr_diario
+    from carteira_movimentacoes import DIARIO_PATH, TOLERANCIA_DC_ABS, dc_bdr_conciliado, mapa_dc_bdr_diario
+    from conciliacao import data_base_maxima
     from db import mapa_liquidez_diario
-    from conciliacao import TOLERANCIA_DC_ABS, data_base_maxima
-    from carteira_movimentacoes import dc_bdr_conciliado
 
     serie = dict(mapa_dc_bdr_diario())
     liq = mapa_liquidez_diario()
