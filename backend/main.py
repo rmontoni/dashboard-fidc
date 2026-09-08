@@ -664,6 +664,44 @@ def get_passivo_cotista_extrato(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@app.get("/fidc/movimentacoes/aquisicoes")
+def get_movimentacoes_aquisicoes(
+    inicio: str = Query(..., description="Início dd/mm/yyyy ou YYYY-MM-DD"),
+    fim: str = Query(..., description="Fim dd/mm/yyyy ou YYYY-MM-DD"),
+    cedente: str | None = Query(None),
+    sacado: str | None = Query(None),
+):
+    try:
+        from movimentacoes import listar_movimentacoes
+
+        return listar_movimentacoes(
+            "aquisicoes", inicio=inicio, fim=fim, cedente=cedente, sacado=sacado
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/fidc/movimentacoes/liquidacoes")
+def get_movimentacoes_liquidacoes(
+    inicio: str = Query(..., description="Início dd/mm/yyyy ou YYYY-MM-DD"),
+    fim: str = Query(..., description="Fim dd/mm/yyyy ou YYYY-MM-DD"),
+    cedente: str | None = Query(None),
+    sacado: str | None = Query(None),
+):
+    try:
+        from movimentacoes import listar_movimentacoes
+
+        return listar_movimentacoes(
+            "liquidacoes", inicio=inicio, fim=fim, cedente=cedente, sacado=sacado
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 @app.get("/fidc/vencimentos")
 def get_vencimentos_carteira(
     dataBase: str = Query(..., description="Data base dd/mm/yyyy ou YYYY-MM-DD"),

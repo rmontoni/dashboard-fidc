@@ -8,6 +8,7 @@ import Extrato from './Extrato'
 import FluxoCaixa from './FluxoCaixa'
 import Inadimplencia from './Inadimplencia'
 import Login from './Login'
+import Movimentacoes from './Movimentacoes'
 import Passivo from './Passivo'
 import Pdd from './Pdd'
 import Vencimentos from './Vencimentos'
@@ -20,6 +21,7 @@ type Pagina =
   | 'passivo'
   | 'extrato'
   | 'vencimentos'
+  | 'movimentacoes'
   | 'pdd'
   | 'inadimplencia'
   | 'fluxo-caixa'
@@ -62,6 +64,7 @@ const PAGINAS: Pagina[] = [
   'passivo',
   'extrato',
   'vencimentos',
+  'movimentacoes',
   'pdd',
   'inadimplencia',
   'fluxo-caixa',
@@ -299,6 +302,13 @@ function App() {
           </button>
           <button
             type="button"
+            className={pagina === 'movimentacoes' ? 'nav-item ativo' : 'nav-item'}
+            onClick={() => setPagina('movimentacoes')}
+          >
+            Movimentações
+          </button>
+          <button
+            type="button"
             className={pagina === 'pdd' ? 'nav-item ativo' : 'nav-item'}
             onClick={() => setPagina('pdd')}
           >
@@ -427,6 +437,7 @@ function App() {
         {pagina === 'passivo' && <Passivo />}
         {pagina === 'extrato' && <Extrato />}
         {pagina === 'vencimentos' && <Vencimentos />}
+        {pagina === 'movimentacoes' && <Movimentacoes />}
         {pagina === 'pdd' && <Pdd />}
         {pagina === 'inadimplencia' && <Inadimplencia />}
         {pagina === 'fluxo-caixa' && <FluxoCaixa />}
