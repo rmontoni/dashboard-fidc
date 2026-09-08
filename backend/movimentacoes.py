@@ -174,6 +174,11 @@ def _linha_liquidacao(row: dict[str, Any], dados: dict[str, Any], data_ref: date
     venc = _parse_data(
         str(dados.get("DATA DE VENCIMENTO") or dados.get("DATA VENCIMENTO") or "")
     )
+    du = (
+        dias_uteis_entre(data_ref, venc)
+        if venc and venc > data_ref
+        else 0
+    )
     return {
         "data": _br(data_ref),
         "data_iso": _iso(data_ref),
@@ -190,6 +195,7 @@ def _linha_liquidacao(row: dict[str, Any], dados: dict[str, Any], data_ref: date
         "tipo_recebivel": str(dados.get("TIPO RECEBIVEL") or "").strip(),
         "seu_numero": str(dados.get("SEU NUMERO") or "").strip(),
         "documento": str(dados.get("DOCUMENTO") or "").strip(),
+        "du": du,
     }
 
 
@@ -248,6 +254,20 @@ def listar_movimentacoes(
         )
     )
 
+    def _prazo_medio(itens: list[dict[str, Any]], peso_chave: str) -> float | None:
+        peso = 0.0
+        soma = 0.0
+        for x in itens:
+            w = float(x.get(peso_chave) or 0)
+            du = float(x.get("du") or 0)
+            if w <= 0 or du <= 0:
+                continue
+            peso += w
+            soma += du * w
+        if peso <= 0:
+            return None
+        return round(soma / peso, 1)
+
     if tipo == "aquisicoes":
         soma_valor = sum(float(x.get("valor") or 0) for x in filtradas)
         soma_face = sum(float(x.get("valor_face") or 0) for x in filtradas)
@@ -267,6 +287,7 @@ def listar_movimentacoes(
             "taxa_am_media": (
                 round(soma_taxa_pond / peso_taxa, 4) if peso_taxa > 0 else None
             ),
+            "prazo_medio_du": _prazo_medio(filtradas, "valor"),
         }
     else:
         totais = {
@@ -275,6 +296,7 @@ def listar_movimentacoes(
                 sum(float(x.get("valor_pago") or 0) for x in filtradas), 2
             ),
             "ajuste": round(sum(float(x.get("ajuste") or 0) for x in filtradas), 2),
+            "prazo_medio_du": _prazo_medio(filtradas, "valor_pago"),
         }
 
     return {

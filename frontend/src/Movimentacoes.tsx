@@ -43,6 +43,7 @@ type RespostaMov = {
     valor?: number
     valor_face?: number
     taxa_am_media?: number | null
+    prazo_medio_du?: number | null
     valor_pago?: number
     ajuste?: number
   }
@@ -82,12 +83,12 @@ function formatarMoeda(valor: number | null | undefined): string {
   })
 }
 
-function formatarPct(valor: number | null | undefined): string {
+function formatarPrazoDu(valor: number | null | undefined): string {
   if (valor == null || Number.isNaN(Number(valor))) return '—'
   return `${Number(valor).toLocaleString('pt-BR', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 4,
-  })}%`
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  })} du`
 }
 
 function hojeIso(): string {
@@ -317,6 +318,10 @@ function Movimentacoes() {
                   <span>Taxa a.m. média</span>
                   <strong>{formatarPct(dados.totais.taxa_am_media ?? null)}</strong>
                 </div>
+                <div className="painel-total">
+                  <span>Prazo médio</span>
+                  <strong>{formatarPrazoDu(dados.totais.prazo_medio_du ?? null)}</strong>
+                </div>
               </>
             ) : (
               <>
@@ -327,6 +332,10 @@ function Movimentacoes() {
                 <div className="painel-total">
                   <span>Ajuste</span>
                   <strong>{formatarMoeda(dados.totais.ajuste)}</strong>
+                </div>
+                <div className="painel-total">
+                  <span>Prazo médio</span>
+                  <strong>{formatarPrazoDu(dados.totais.prazo_medio_du ?? null)}</strong>
                 </div>
               </>
             )}
@@ -398,6 +407,15 @@ function Movimentacoes() {
                         return (
                           <td key={col.id}>
                             <strong>Total ({dados.totais.n})</strong>
+                          </td>
+                        )
+                      }
+                      if (col.id === 'vencimento_iso') {
+                        return (
+                          <td key={col.id}>
+                            <strong>
+                              {formatarPrazoDu(dados.totais.prazo_medio_du ?? null)}
+                            </strong>
                           </td>
                         )
                       }
