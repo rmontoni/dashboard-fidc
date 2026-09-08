@@ -61,9 +61,13 @@ def _match_cedente(pos: dict[str, Any], cedente: str | None) -> bool:
 
 
 def _parse_empresas_param(texto: str | None) -> set[str] | None:
+    """None = todas; set vazio = nenhuma; set com nomes = filtro."""
     if not texto or not str(texto).strip():
         return None
-    partes = [p.strip() for p in str(texto).split("|") if p.strip()]
+    t = str(texto).strip()
+    if t.upper() in ("__NENHUMA__", "__NONE__", "NENHUMA"):
+        return set()
+    partes = [p.strip() for p in t.split("|") if p.strip()]
     return set(partes) if partes else None
 
 
@@ -100,8 +104,11 @@ def _match_empresas(
     empresas: set[str] | None,
     mapa: dict[str, str],
 ) -> bool:
-    if not empresas:
+    # None = todas; set() = nenhuma (não casa); set com nomes = filtro
+    if empresas is None:
         return True
+    if len(empresas) == 0:
+        return False
     emp = _empresa_pos(pos, mapa)
     if emp is None:
         return False
@@ -356,7 +363,7 @@ def _estoque_inicial_sacado(
     from carteira_movimentacoes import carregar_estoque_base
 
     mapa = mapa_emp if mapa_emp is not None else (
-        _carregar_mapa_empresa() if empresas else {}
+        _carregar_mapa_empresa() if empresas is not None else {}
     )
     return {
         k: dict(v)
@@ -378,7 +385,7 @@ def _eventos_do_sacado(
 ) -> list[dict[str, Any]]:
     """Replay só de aquisições/liquidações dos títulos do sacado."""
     mapa = mapa_emp if mapa_emp is not None else (
-        _carregar_mapa_empresa() if empresas else {}
+        _carregar_mapa_empresa() if empresas is not None else {}
     )
     chaves = set(chaves_iniciais or ())
     out: list[dict[str, Any]] = []
@@ -493,7 +500,7 @@ def _estado_sacado_ate(
     )
 
     mapa = mapa_emp if mapa_emp is not None else (
-        _carregar_mapa_empresa() if empresas else {}
+        _carregar_mapa_empresa() if empresas is not None else {}
     )
     estado = _estoque_inicial_sacado(
         alvo, cedente=cedente, empresas=empresas, mapa_emp=mapa
@@ -611,10 +618,10 @@ def montar_extrato_sacado(
     sacado vazio / "Todos": agrega todos os sacados (respeitando cedente/empresas).
     """
     empresas_set = _parse_empresas_param(empresas)
-    mapa_emp = _carregar_mapa_empresa() if empresas_set else {}
+    mapa_emp = _carregar_mapa_empresa() if empresas_set is not None else {}
     usar_cache = (
         not cedente
-        and not empresas_set
+        and empresas_set is None
         and not _sacado_todos(sacado)
     )
 
@@ -673,7 +680,7 @@ def _montar_extrato_sacado_live(
     fim = _parse_data_base(data_base)
     alvo = sacado.strip() if not _sacado_todos(sacado) else "Todos"
     mapa = mapa_emp if mapa_emp is not None else (
-        _carregar_mapa_empresa() if empresas else {}
+        _carregar_mapa_empresa() if empresas is not None else {}
     )
 
     from carteira_movimentacoes import (

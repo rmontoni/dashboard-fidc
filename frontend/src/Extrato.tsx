@@ -122,8 +122,13 @@ function Extrato() {
   const [cedentes, setCedentes] = useState<CedenteItem[]>([])
   const [cedenteSel, setCedenteSel] = useState('')
   const [empresas, setEmpresas] = useState<EmpresaItem[]>([])
+  /** null = Todas; Set = filtro; empty Set + nenhuma = desmarcadas */
   const [empresasFiltro, setEmpresasFiltro] = useState<Set<string>>(new Set())
-  const [empresasAberto, setEmpresasAberto] = useState(false)
+  const [empresasNenhuma, setEmpresasNenhuma] = useState(false)
+  const [buscaEmpresa, setBuscaEmpresa] = useState('')
+  const [sugestoesEmpresaAberto, setSugestoesEmpresaAberto] = useState(false)
+  /** Alterna A/B para o option Todos disparar onChange ao reclicar. */
+  const [todosToken, setTodosToken] = useState<'A' | 'B'>('A')
   const [sacados, setSacados] = useState<SacadoItem[]>([])
   /** null = ainda não escolhido (auto 1º); '' = Todos; nome = sacado */
   const [sacadoSel, setSacadoSel] = useState<string | null>(null)
@@ -150,22 +155,49 @@ function Extrato() {
   )
 
   const empresasParam = useMemo(() => {
+    if (empresasNenhuma) return '__nenhuma__'
     if (empresasFiltro.size === 0) return ''
     return [...empresasFiltro].sort(compararNomes).join('|')
-  }, [empresasFiltro])
+  }, [empresasFiltro, empresasNenhuma])
 
-  const labelEmpresas = useMemo(() => {
-    if (empresasFiltro.size === 0) return 'Todos'
+  const termoBuscaEmpresa = useMemo(
+    () => normalizarBusca(buscaEmpresa),
+    [buscaEmpresa],
+  )
+
+  const empresasNaLista = useMemo(() => {
+    if (termoBuscaEmpresa.length < 3) return empresasOrdenadas
+    return empresasOrdenadas.filter((e) =>
+      normalizarBusca(e.empresa).includes(termoBuscaEmpresa),
+    )
+  }, [empresasOrdenadas, termoBuscaEmpresa])
+
+  const sugestoesEmpresa = useMemo(() => {
+    if (termoBuscaEmpresa.length < 3) return []
+    return empresasNaLista.slice(0, 30)
+  }, [empresasNaLista, termoBuscaEmpresa])
+
+  const valorSelectEmpresa = useMemo(() => {
+    if (empresasNenhuma) return '__nenhuma__'
+    if (empresasFiltro.size === 0) return `todos_${todosToken}`
     if (empresasFiltro.size === 1) return [...empresasFiltro][0]
-    return `${empresasFiltro.size} selecionadas`
-  }, [empresasFiltro])
+    return '__multi__'
+  }, [empresasFiltro, empresasNenhuma, todosToken])
+
+  const valorOptionTodos =
+    !empresasNenhuma && empresasFiltro.size === 0
+      ? todosToken === 'A'
+        ? 'todos_B'
+        : 'todos_A'
+      : `todos_${todosToken}`
 
   const sacadosPorEmpresa = useMemo(() => {
+    if (empresasNenhuma) return []
     if (empresasFiltro.size === 0) return sacados
     return sacados.filter((s) =>
       (s.empresas ?? []).some((e) => empresasFiltro.has(e)),
     )
-  }, [sacados, empresasFiltro])
+  }, [sacados, empresasFiltro, empresasNenhuma])
 
   const sacadosOrdenados = useMemo(
     () => [...sacadosPorEmpresa].sort((a, b) => compararNomes(a.sacado, b.sacado)),
@@ -183,36 +215,61 @@ function Extrato() {
   }, [sacadosOrdenados, buscaSacado])
 
   function selecionarTodasEmpresas() {
+    setEmpresasNenhuma(false)
+    setEmpresasFiltro(new Set())
+  }
+
+  function desmarcarTodasEmpresas() {
+    setEmpresasNenhuma(true)
     setEmpresasFiltro(new Set())
   }
 
   function alternarEmpresa(nome: string) {
-    setEmpresasFiltro((atual) => {
-      if (atual.size === 0) {
-        const todas = new Set(empresasOrdenadas.map((e) => e.empresa))
-        todas.delete(nome)
-        return todas
+    const eraTodos = !empresasNenhuma && empresasFiltro.size === 0
+    if (eraTodos) {
+      setEmpresasNenhuma(false)
+      setEmpresasFiltro(new Set([nome]))
+      return
+    }
+    const prox = new Set(empresasFiltro)
+    if (prox.has(nome)) prox.delete(nome)
+    else prox.add(nome)
+    if (prox.size === 0) {
+      desmarcarTodasEmpresas()
+      return
+    }
+    if (prox.size === empresasOrdenadas.length) {
+      selecionarTodasEmpresas()
+      return
+    }
+    setEmpresasNenhuma(false)
+    setEmpresasFiltro(prox)
+  }
+
+  function onEmpresaSelectChange(value: string) {
+    if (value.startsWith('todos_')) {
+      if (!empresasNenhuma && empresasFiltro.size === 0) {
+        desmarcarTodasEmpresas()
+      } else {
+        selecionarTodasEmpresas()
+        setTodosToken(value.endsWith('A') ? 'A' : 'B')
       }
-      const prox = new Set(atual)
-      if (prox.has(nome)) prox.delete(nome)
-      else prox.add(nome)
-      if (prox.size === 0 || prox.size === empresasOrdenadas.length) {
-        return new Set()
-      }
-      return prox
-    })
+      return
+    }
+    if (value === '__nenhuma__' || value === '__multi__') return
+    alternarEmpresa(value)
   }
 
   useEffect(() => {
-    if (!empresasAberto) return
+    if (!sugestoesEmpresaAberto) return
     function fechar(ev: MouseEvent) {
       const alvo = ev.target as HTMLElement | null
       if (alvo?.closest('.extrato-empresa-filtro')) return
-      setEmpresasAberto(false)
+      setSugestoesEmpresaAberto(false)
     }
     document.addEventListener('mousedown', fechar)
     return () => document.removeEventListener('mousedown', fechar)
-  }, [empresasAberto])
+  }, [sugestoesEmpresaAberto])
 
   useEffect(() => {
     let cancelado = false
@@ -278,9 +335,17 @@ function Extrato() {
           if (atual.size === 0) return atual
           const nomes = new Set(listaEmp.map((e) => e.empresa))
           const prox = new Set([...atual].filter((e) => nomes.has(e)))
-          if (prox.size === 0 || prox.size === nomes.size) return new Set()
+          if (prox.size === 0) {
+            setEmpresasNenhuma(true)
+            return new Set()
+          }
+          if (prox.size === nomes.size) {
+            setEmpresasNenhuma(false)
+            return new Set()
+          }
           return prox
         })
+        setBuscaEmpresa('')
         const lista = (json.sacados ?? []) as SacadoItem[]
         setSacados(lista)
         setBuscaSacado('')
@@ -427,38 +492,93 @@ function Extrato() {
           </label>
 
           <div className="select-cotista extrato-empresa-filtro">
-            <span id="extrato-empresa-label">Empresa</span>
-            <button
-              type="button"
-              className="extrato-empresa-botao"
-              aria-labelledby="extrato-empresa-label"
-              aria-expanded={empresasAberto}
+            <label htmlFor="extrato-busca-empresa">Empresa</label>
+            <input
+              id="extrato-busca-empresa"
+              type="search"
+              className="extrato-busca-sacado"
+              placeholder="Digite ao menos 3 letras…"
+              value={buscaEmpresa}
+              onChange={(e) => {
+                setBuscaEmpresa(e.target.value)
+                setSugestoesEmpresaAberto(true)
+              }}
+              onFocus={() => setSugestoesEmpresaAberto(true)}
               disabled={empresasOrdenadas.length === 0}
-              onClick={() => setEmpresasAberto((v) => !v)}
-            >
-              {empresasOrdenadas.length === 0 ? 'Sem empresas' : labelEmpresas}
-            </button>
-            {empresasAberto && empresasOrdenadas.length > 0 && (
-              <div className="extrato-empresa-dropdown" role="listbox" aria-multiselectable>
-                <label className="extrato-empresa-opcao">
-                  <input
-                    type="checkbox"
-                    checked={empresasFiltro.size === 0}
-                    onChange={selecionarTodasEmpresas}
-                  />
-                  Todos
-                </label>
-                {empresasOrdenadas.map((e) => (
-                  <label key={e.empresa} className="extrato-empresa-opcao">
-                    <input
-                      type="checkbox"
-                      checked={
-                        empresasFiltro.size === 0 || empresasFiltro.has(e.empresa)
+              autoComplete="off"
+            />
+            {sugestoesEmpresaAberto && termoBuscaEmpresa.length >= 3 && (
+              <div className="extrato-empresa-sugestoes" role="listbox">
+                {sugestoesEmpresa.length === 0 ? (
+                  <div className="extrato-empresa-sugestao vazio">Nenhuma empresa</div>
+                ) : (
+                  sugestoesEmpresa.map((e) => (
+                    <button
+                      key={e.empresa}
+                      type="button"
+                      className={
+                        empresasFiltro.has(e.empresa)
+                          ? 'extrato-empresa-sugestao ativo'
+                          : 'extrato-empresa-sugestao'
                       }
-                      onChange={() => alternarEmpresa(e.empresa)}
-                    />
-                    <span title={e.empresa}>{e.empresa}</span>
-                  </label>
+                      onClick={() => {
+                        alternarEmpresa(e.empresa)
+                        setBuscaEmpresa('')
+                        setSugestoesEmpresaAberto(false)
+                      }}
+                    >
+                      {e.empresa}
+                      <span>VP {formatarMoeda(e.vp)}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+            <select
+              value={
+                valorSelectEmpresa.startsWith('todos_') ||
+                valorSelectEmpresa === '__multi__' ||
+                valorSelectEmpresa === '__nenhuma__' ||
+                empresasNaLista.some((e) => e.empresa === valorSelectEmpresa)
+                  ? valorSelectEmpresa
+                  : valorOptionTodos
+              }
+              onChange={(e) => onEmpresaSelectChange(e.target.value)}
+              disabled={empresasOrdenadas.length === 0}
+            >
+              <option value={valorOptionTodos}>Todos</option>
+              {empresasNenhuma && (
+                <option value="__nenhuma__">Nenhuma selecionada</option>
+              )}
+              {empresasFiltro.size > 1 && (
+                <option value="__multi__">
+                  {empresasFiltro.size} selecionadas
+                </option>
+              )}
+              {empresasNaLista.length === 0 && termoBuscaEmpresa.length >= 3 && (
+                <option value="__none__" disabled>
+                  Nenhum na busca
+                </option>
+              )}
+              {empresasNaLista.map((e) => (
+                <option key={e.empresa} value={e.empresa}>
+                  {empresasFiltro.has(e.empresa) ? '✓ ' : ''}
+                  {e.empresa} — VP {formatarMoeda(e.vp)}
+                </option>
+              ))}
+            </select>
+            {empresasFiltro.size > 0 && (
+              <div className="extrato-empresa-chips">
+                {[...empresasFiltro].sort(compararNomes).map((nome) => (
+                  <button
+                    key={nome}
+                    type="button"
+                    className="extrato-empresa-chip"
+                    title="Remover"
+                    onClick={() => alternarEmpresa(nome)}
+                  >
+                    {nome} ×
+                  </button>
                 ))}
               </div>
             )}

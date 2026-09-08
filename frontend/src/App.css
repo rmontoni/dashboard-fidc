@@ -1347,64 +1347,82 @@ td.alerta-pct {
 
 .extrato-empresa-filtro {
   position: relative;
-  min-width: 220px;
+  min-width: 280px;
 }
 
-.extrato-empresa-botao {
-  display: block;
-  width: 100%;
-  margin-top: 0.25rem;
-  padding: 8px 10px;
-  text-align: left;
-  font: inherit;
-  color: var(--ink);
-  background: #fff;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  cursor: pointer;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.extrato-empresa-botao:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
-.extrato-empresa-dropdown {
+.extrato-empresa-sugestoes {
   position: absolute;
   z-index: 30;
-  top: calc(100% + 4px);
+  top: 4.6rem;
   left: 0;
   right: 0;
   min-width: 260px;
-  max-height: 260px;
+  max-height: 240px;
   overflow: auto;
-  padding: 6px;
+  padding: 4px;
   background: #fff;
   border: 1px solid var(--line);
   border-radius: 8px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
 }
 
-.extrato-empresa-opcao {
+.extrato-empresa-sugestao {
   display: flex;
-  align-items: flex-start;
+  width: 100%;
+  align-items: baseline;
+  justify-content: space-between;
   gap: 8px;
-  padding: 6px 8px;
-  font-size: 0.9rem;
-  cursor: pointer;
+  padding: 8px 10px;
+  border: 0;
   border-radius: 4px;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  color: var(--ink);
+  cursor: pointer;
 }
 
-.extrato-empresa-opcao:hover {
-  background: rgba(0, 0, 0, 0.04);
+.extrato-empresa-sugestao:hover,
+.extrato-empresa-sugestao.ativo {
+  background: rgba(0, 0, 0, 0.05);
 }
 
-.extrato-empresa-opcao span {
+.extrato-empresa-sugestao span {
+  flex-shrink: 0;
+  font-size: 0.8rem;
+  color: var(--muted, #667);
+}
+
+.extrato-empresa-sugestao.vazio {
+  cursor: default;
+  color: var(--muted, #667);
+}
+
+.extrato-empresa-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+  max-width: 320px;
+}
+
+.extrato-empresa-chip {
+  max-width: 100%;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #f4f5f7;
+  font: inherit;
+  font-size: 0.78rem;
+  color: var(--ink);
+  cursor: pointer;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.extrato-empresa-chip:hover {
+  background: #e8eaee;
 }
 
 .select-cotista input[type='date'] {
