@@ -27,6 +27,7 @@ type LinhaLiq = {
   situacao: string
   vencimento: string | null
   vencimento_iso: string | null
+  valor_face: number
   valor_pago: number
   ajuste: number
   tipo_recebivel: string
@@ -70,6 +71,7 @@ const COLUNAS_LIQ: Coluna[] = [
   { id: 'ocorrencia', rotulo: 'Ocorrência' },
   { id: 'situacao', rotulo: 'Situação' },
   { id: 'vencimento_iso', rotulo: 'Data de vencimento' },
+  { id: 'valor_face', rotulo: 'Valor face', numerico: true },
   { id: 'valor_pago', rotulo: 'Valor pago', numerico: true },
   { id: 'ajuste', rotulo: 'Ajuste', numerico: true },
   { id: 'tipo_recebivel', rotulo: 'Tipo recebível' },
@@ -326,6 +328,10 @@ function Movimentacoes() {
             ) : (
               <>
                 <div className="painel-total">
+                  <span>Valor face</span>
+                  <strong>{formatarMoeda(dados.totais.valor_face)}</strong>
+                </div>
+                <div className="painel-total">
                   <span>Valor pago</span>
                   <strong>{formatarMoeda(dados.totais.valor_pago)}</strong>
                 </div>
@@ -444,6 +450,13 @@ function Movimentacoes() {
                           )
                         }
                       } else {
+                        if (col.id === 'valor_face') {
+                          return (
+                            <td key={col.id}>
+                              <strong>{formatarMoeda(dados.totais.valor_face)}</strong>
+                            </td>
+                          )
+                        }
                         if (col.id === 'valor_pago') {
                           return (
                             <td key={col.id}>

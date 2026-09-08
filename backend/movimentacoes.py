@@ -168,9 +168,10 @@ def _linha_liquidacao(row: dict[str, Any], dados: dict[str, Any], data_ref: date
     face = _parse_valor(dados.get("VALOR DE VENCIMENTO"))
     ajuste_raw = dados.get("AJUSTE")
     if ajuste_raw is None or str(ajuste_raw).strip() == "":
-        ajuste = round(pago - face, 2)
+        # Ajuste = face − pago (inverso do CSV BDR)
+        ajuste = round(face - pago, 2)
     else:
-        ajuste = round(_parse_valor(ajuste_raw), 2)
+        ajuste = round(-_parse_valor(ajuste_raw), 2)
     venc = _parse_data(
         str(dados.get("DATA DE VENCIMENTO") or dados.get("DATA VENCIMENTO") or "")
     )
@@ -190,6 +191,7 @@ def _linha_liquidacao(row: dict[str, Any], dados: dict[str, Any], data_ref: date
         ).strip(),
         "vencimento": _br(venc),
         "vencimento_iso": _iso(venc),
+        "valor_face": round(face, 2),
         "valor_pago": round(pago, 2),
         "ajuste": ajuste,
         "tipo_recebivel": str(dados.get("TIPO RECEBIVEL") or "").strip(),
@@ -292,6 +294,9 @@ def listar_movimentacoes(
     else:
         totais = {
             "n": len(filtradas),
+            "valor_face": round(
+                sum(float(x.get("valor_face") or 0) for x in filtradas), 2
+            ),
             "valor_pago": round(
                 sum(float(x.get("valor_pago") or 0) for x in filtradas), 2
             ),
