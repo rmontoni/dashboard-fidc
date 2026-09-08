@@ -737,19 +737,32 @@ def get_extrato_sacados_lista(
 
 @app.get("/fidc/extrato/sacado")
 def get_extrato_sacado(
-    sacado: str = Query(..., description="Nome ou documento do sacado"),
+    sacado: str = Query(
+        "Todos",
+        description="Nome ou documento do sacado; vazio/Todos = agregado",
+    ),
     dataBase: str = Query(..., description="Data base dd/mm/yyyy ou YYYY-MM-DD"),
     modo: str = Query(
         "motor",
         description="motor (sem juros pós-venc) ou juros_pos_venc",
     ),
     cedente: str | None = Query(None, description="Filtrar por cedente"),
+    empresas: str | None = Query(
+        None,
+        description="Empresas filtradas, separadas por | (vazio = todas)",
+    ),
 ):
     """Evolução diária da posição do sacado (motor de carteira)."""
     try:
         from extrato_sacado import montar_extrato_sacado
 
-        return montar_extrato_sacado(sacado, dataBase, modo=modo, cedente=cedente)
+        return montar_extrato_sacado(
+            sacado,
+            dataBase,
+            modo=modo,
+            cedente=cedente,
+            empresas=empresas,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001

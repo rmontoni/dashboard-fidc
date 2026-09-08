@@ -17,6 +17,8 @@ type SacadoItem = {
   sacado: string
   doc_sacado: string | null
   cedente?: string
+  empresas?: string[]
+  empresa?: string | null
   face: number
   vp: number
   pdd: number
@@ -25,6 +27,14 @@ type SacadoItem = {
 
 type CedenteItem = {
   cedente: string
+  face: number
+  vp: number
+  n_sacados: number
+  n_titulos: number
+}
+
+type EmpresaItem = {
+  empresa: string
   face: number
   vp: number
   n_sacados: number
@@ -111,8 +121,12 @@ function Extrato() {
   })
   const [cedentes, setCedentes] = useState<CedenteItem[]>([])
   const [cedenteSel, setCedenteSel] = useState('')
+  const [empresas, setEmpresas] = useState<EmpresaItem[]>([])
+  const [empresasFiltro, setEmpresasFiltro] = useState<Set<string>>(new Set())
+  const [empresasAberto, setEmpresasAberto] = useState(false)
   const [sacados, setSacados] = useState<SacadoItem[]>([])
-  const [sacadoSel, setSacadoSel] = useState('')
+  /** null = ainda não escolhido (auto 1º); '' = Todos; nome = sacado */
+  const [sacadoSel, setSacadoSel] = useState<string | null>(null)
   const [buscaSacado, setBuscaSacado] = useState('')
   const [modo, setModo] = useState<'motor' | 'juros_pos_venc'>('motor')
   const [extrato, setExtrato] = useState<RespostaExtrato | null>(null)
@@ -130,9 +144,32 @@ function Extrato() {
     [cedentes],
   )
 
+  const empresasOrdenadas = useMemo(
+    () => [...empresas].sort((a, b) => compararNomes(a.empresa, b.empresa)),
+    [empresas],
+  )
+
+  const empresasParam = useMemo(() => {
+    if (empresasFiltro.size === 0) return ''
+    return [...empresasFiltro].sort(compararNomes).join('|')
+  }, [empresasFiltro])
+
+  const labelEmpresas = useMemo(() => {
+    if (empresasFiltro.size === 0) return 'Todos'
+    if (empresasFiltro.size === 1) return [...empresasFiltro][0]
+    return `${empresasFiltro.size} selecionadas`
+  }, [empresasFiltro])
+
+  const sacadosPorEmpresa = useMemo(() => {
+    if (empresasFiltro.size === 0) return sacados
+    return sacados.filter((s) =>
+      (s.empresas ?? []).some((e) => empresasFiltro.has(e)),
+    )
+  }, [sacados, empresasFiltro])
+
   const sacadosOrdenados = useMemo(
-    () => [...sacados].sort((a, b) => compararNomes(a.sacado, b.sacado)),
-    [sacados],
+    () => [...sacadosPorEmpresa].sort((a, b) => compararNomes(a.sacado, b.sacado)),
+    [sacadosPorEmpresa],
   )
 
   const sacadosFiltrados = useMemo(() => {
@@ -144,6 +181,38 @@ function Extrato() {
       return nome.includes(termo) || doc.includes(termo)
     })
   }, [sacadosOrdenados, buscaSacado])
+
+  function selecionarTodasEmpresas() {
+    setEmpresasFiltro(new Set())
+  }
+
+  function alternarEmpresa(nome: string) {
+    setEmpresasFiltro((atual) => {
+      if (atual.size === 0) {
+        const todas = new Set(empresasOrdenadas.map((e) => e.empresa))
+        todas.delete(nome)
+        return todas
+      }
+      const prox = new Set(atual)
+      if (prox.has(nome)) prox.delete(nome)
+      else prox.add(nome)
+      if (prox.size === 0 || prox.size === empresasOrdenadas.length) {
+        return new Set()
+      }
+      return prox
+    })
+  }
+
+  useEffect(() => {
+    if (!empresasAberto) return
+    function fechar(ev: MouseEvent) {
+      const alvo = ev.target as HTMLElement | null
+      if (alvo?.closest('.extrato-empresa-filtro')) return
+      setEmpresasAberto(false)
+    }
+    document.addEventListener('mousedown', fechar)
+    return () => document.removeEventListener('mousedown', fechar)
+  }, [empresasAberto])
 
   useEffect(() => {
     let cancelado = false
@@ -198,21 +267,35 @@ function Extrato() {
         if (cancelado) return
         if (!res.ok) {
           setCedentes([])
+          setEmpresas([])
           setSacados([])
           return
         }
         setCedentes((json.cedentes ?? []) as CedenteItem[])
+        const listaEmp = (json.empresas ?? []) as EmpresaItem[]
+        setEmpresas(listaEmp)
+        setEmpresasFiltro((atual) => {
+          if (atual.size === 0) return atual
+          const nomes = new Set(listaEmp.map((e) => e.empresa))
+          const prox = new Set([...atual].filter((e) => nomes.has(e)))
+          if (prox.size === 0 || prox.size === nomes.size) return new Set()
+          return prox
+        })
         const lista = (json.sacados ?? []) as SacadoItem[]
         setSacados(lista)
         setBuscaSacado('')
         setSacadoSel((atual) => {
-          const ordenada = [...lista].sort((a, b) => compararNomes(a.sacado, b.sacado))
+          if (atual === '') return ''
+          const ordenada = [...lista].sort((a, b) =>
+            compararNomes(a.sacado, b.sacado),
+          )
           if (atual && ordenada.some((s) => s.sacado === atual)) return atual
           return ordenada[0]?.sacado ?? ''
         })
       } catch {
         if (!cancelado) {
           setCedentes([])
+          setEmpresas([])
           setSacados([])
         }
       }
@@ -224,23 +307,24 @@ function Extrato() {
   }, [dataBase, cedenteSel])
 
   useEffect(() => {
-    if (!dataBase || !sacadoSel) {
+    if (!dataBase || sacadoSel === null) {
       setExtrato(null)
       return
     }
     let cancelado = false
     const ctrl = new AbortController()
-    const timer = window.setTimeout(() => ctrl.abort(), 120_000)
+    const timer = window.setTimeout(() => ctrl.abort(), 180_000)
     async function carregarExtrato() {
       setCarregando(true)
       setErro(null)
       try {
         const params = new URLSearchParams({
           dataBase,
-          sacado: sacadoSel,
+          sacado: sacadoSel || 'Todos',
           modo,
         })
         if (cedenteSel) params.set('cedente', cedenteSel)
+        if (empresasParam) params.set('empresas', empresasParam)
         const res = await fetch(`${API_BASE}/fidc/extrato/sacado?${params}`, {
           signal: ctrl.signal,
         })
@@ -257,7 +341,7 @@ function Extrato() {
         setExtrato(null)
         if (e instanceof DOMException && e.name === 'AbortError') {
           setErro(
-            'Tempo esgotado (2 min). O servidor pode estar ocupado com a atualização — tente novamente em alguns minutos.',
+            'Tempo esgotado. O servidor pode estar ocupado — tente novamente ou filtre por empresa/sacado.',
           )
         } else {
           setErro(e instanceof Error ? e.message : 'Erro de rede')
@@ -273,7 +357,14 @@ function Extrato() {
       ctrl.abort()
       window.clearTimeout(timer)
     }
-  }, [dataBase, sacadoSel, modo, cedenteSel])
+  }, [dataBase, sacadoSel, modo, cedenteSel, empresasParam])
+
+  useEffect(() => {
+    if (sacadoSel === null || sacadoSel === '') return
+    if (!sacadosOrdenados.some((s) => s.sacado === sacadoSel)) {
+      setSacadoSel('')
+    }
+  }, [sacadosOrdenados, sacadoSel])
 
   const grafico = useMemo(() => {
     if (!extrato?.serie?.length) return []
@@ -298,7 +389,8 @@ function Extrato() {
           <h1>Extrato — {dataBase || '…'}</h1>
           {extrato?.inicio && (
             <p className="subtitulo">
-              Desde {extrato.inicio} · {extrato.modo_label}
+              {sacadoSel || 'Todos os sacados'} · Desde {extrato.inicio} ·{' '}
+              {extrato.modo_label}
             </p>
           )}
         </div>
@@ -333,6 +425,45 @@ function Extrato() {
               ))}
             </select>
           </label>
+
+          <div className="select-cotista extrato-empresa-filtro">
+            <span id="extrato-empresa-label">Empresa</span>
+            <button
+              type="button"
+              className="extrato-empresa-botao"
+              aria-labelledby="extrato-empresa-label"
+              aria-expanded={empresasAberto}
+              disabled={empresasOrdenadas.length === 0}
+              onClick={() => setEmpresasAberto((v) => !v)}
+            >
+              {empresasOrdenadas.length === 0 ? 'Sem empresas' : labelEmpresas}
+            </button>
+            {empresasAberto && empresasOrdenadas.length > 0 && (
+              <div className="extrato-empresa-dropdown" role="listbox" aria-multiselectable>
+                <label className="extrato-empresa-opcao">
+                  <input
+                    type="checkbox"
+                    checked={empresasFiltro.size === 0}
+                    onChange={selecionarTodasEmpresas}
+                  />
+                  Todos
+                </label>
+                {empresasOrdenadas.map((e) => (
+                  <label key={e.empresa} className="extrato-empresa-opcao">
+                    <input
+                      type="checkbox"
+                      checked={
+                        empresasFiltro.size === 0 || empresasFiltro.has(e.empresa)
+                      }
+                      onChange={() => alternarEmpresa(e.empresa)}
+                    />
+                    <span title={e.empresa}>{e.empresa}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+
           <div className="select-cotista extrato-sacado-filtro">
             <label htmlFor="extrato-busca-sacado">Sacado</label>
             <input
@@ -347,16 +478,20 @@ function Extrato() {
             />
             <select
               value={
-                sacadosFiltrados.some((s) => s.sacado === sacadoSel) ? sacadoSel : ''
+                sacadoSel === null
+                  ? ''
+                  : !sacadoSel ||
+                      sacadosFiltrados.some((s) => s.sacado === sacadoSel)
+                    ? sacadoSel
+                    : ''
               }
               onChange={(e) => setSacadoSel(e.target.value)}
-              disabled={sacadosFiltrados.length === 0}
+              disabled={sacadoSel === null && sacadosOrdenados.length === 0}
             >
-              {sacadosFiltrados.length === 0 && (
-                <option value="">
-                  {sacadosOrdenados.length === 0
-                    ? 'Sem sacados'
-                    : 'Nenhum sacado na busca'}
+              <option value="">Todos</option>
+              {sacadosFiltrados.length === 0 && buscaSacado.trim() && (
+                <option value="__none__" disabled>
+                  Nenhum sacado na busca
                 </option>
               )}
               {sacadosFiltrados.map((s) => (

@@ -34,7 +34,19 @@ def _label_dia(d: date, ref: date) -> str:
     return d.strftime(fmt)
 
 
+SEM_EMPRESA = "(sem empresa)"
+
+
+def _sacado_todos(alvo: str | None) -> bool:
+    if alvo is None:
+        return True
+    t = alvo.strip()
+    return not t or t.upper() in ("TODOS", "TODAS")
+
+
 def _match_sacado(pos: dict[str, Any], alvo: str) -> bool:
+    if _sacado_todos(alvo):
+        return True
     nome = str(pos.get("sacado") or "").strip().upper()
     doc = str(pos.get("doc_sacado") or "").strip()
     alvo_u = alvo.strip().upper()
@@ -46,6 +58,54 @@ def _match_cedente(pos: dict[str, Any], cedente: str | None) -> bool:
     if not cedente or cedente.strip().upper() in ("", "TODOS"):
         return True
     return str(pos.get("cedente") or "").strip().upper() == cedente.strip().upper()
+
+
+def _parse_empresas_param(texto: str | None) -> set[str] | None:
+    if not texto or not str(texto).strip():
+        return None
+    partes = [p.strip() for p in str(texto).split("|") if p.strip()]
+    return set(partes) if partes else None
+
+
+def _carregar_mapa_empresa() -> dict[str, str]:
+    """documento → nome da empresa (cadastro consignado)."""
+    try:
+        from consignado import _carregar_cadastro
+
+        cadastro = _carregar_cadastro()
+    except Exception:  # noqa: BLE001
+        return {}
+    out: dict[str, str] = {}
+    for doc, meta in cadastro.items():
+        emp = str(meta.get("empresa") or "").strip()
+        out[str(doc).strip()] = emp if emp else SEM_EMPRESA
+    return out
+
+
+def _documento_pos(pos: dict[str, Any]) -> str:
+    return str(
+        pos.get("documento") or pos.get("nm_cessao_bdr") or pos.get("nm_cessao") or ""
+    ).strip()
+
+
+def _empresa_pos(pos: dict[str, Any], mapa: dict[str, str]) -> str | None:
+    doc = _documento_pos(pos)
+    if not doc:
+        return None
+    return mapa.get(doc)
+
+
+def _match_empresas(
+    pos: dict[str, Any],
+    empresas: set[str] | None,
+    mapa: dict[str, str],
+) -> bool:
+    if not empresas:
+        return True
+    emp = _empresa_pos(pos, mapa)
+    if emp is None:
+        return False
+    return emp in empresas
 
 
 def _listar_sacados_live(
@@ -63,10 +123,13 @@ def _listar_sacados_live(
             "data_ref": _br(ref),
             "data_ref_iso": ref.isoformat(),
             "cedentes": [],
+            "empresas": [],
             "sacados": [],
         }
 
+    mapa_emp = _carregar_mapa_empresa()
     agg_ced: dict[str, dict[str, Any]] = {}
+    agg_emp: dict[str, dict[str, Any]] = {}
     agg: dict[str, dict[str, Any]] = {}
     for _, row in df.iterrows():
         nome_ced = str(row.get("cedente") or "").strip() or "(sem cedente)"
@@ -86,9 +149,25 @@ def _listar_sacados_live(
             }
         agg_ced[chave_ced]["face"] += float(row.get("valor_face") or 0)
         vp_c = row.get("vl_presente_adm")
-        agg_ced[chave_ced]["vp"] += float(vp_c) if vp_c == vp_c else 0.0
+        vp_val = float(vp_c) if vp_c == vp_c else 0.0
+        agg_ced[chave_ced]["vp"] += vp_val
         agg_ced[chave_ced]["n_sacados"].add(nome.upper())
         agg_ced[chave_ced]["n_titulos"] += 1
+
+        emp = _empresa_pos(row, mapa_emp)
+        if emp:
+            if emp not in agg_emp:
+                agg_emp[emp] = {
+                    "empresa": emp,
+                    "face": 0.0,
+                    "vp": 0.0,
+                    "n_sacados": set(),
+                    "n_titulos": 0,
+                }
+            agg_emp[emp]["face"] += float(row.get("valor_face") or 0)
+            agg_emp[emp]["vp"] += vp_val
+            agg_emp[emp]["n_sacados"].add(nome.upper())
+            agg_emp[emp]["n_titulos"] += 1
 
         chave = nome.upper()
         if chave not in agg:
@@ -97,11 +176,14 @@ def _listar_sacados_live(
                 "sacado": nome,
                 "doc_sacado": str(doc).strip() if doc == doc and doc else None,
                 "cedente": nome_ced,
+                "empresas": set(),
                 "face": 0.0,
                 "vp": 0.0,
                 "pdd": 0.0,
                 "n_titulos": 0,
             }
+        if emp:
+            agg[chave]["empresas"].add(emp)
         agg[chave]["face"] += float(row.get("valor_face") or 0)
         vp = row.get("vl_presente_adm")
         agg[chave]["vp"] += float(vp) if vp == vp else 0.0
@@ -122,13 +204,29 @@ def _listar_sacados_live(
         )
     cedentes.sort(key=lambda c: (-c["vp"], c["cedente"]))
 
+    empresas = []
+    for item in agg_emp.values():
+        empresas.append(
+            {
+                "empresa": item["empresa"],
+                "face": round(item["face"], 2),
+                "vp": round(item["vp"], 2),
+                "n_sacados": len(item["n_sacados"]),
+                "n_titulos": item["n_titulos"],
+            }
+        )
+    empresas.sort(key=lambda e: e["empresa"].casefold())
+
     sacados = []
     for item in agg.values():
+        emps = sorted(item["empresas"], key=lambda e: e.casefold())
         sacados.append(
             {
                 "sacado": item["sacado"],
                 "doc_sacado": item["doc_sacado"],
                 "cedente": item["cedente"],
+                "empresas": emps,
+                "empresa": emps[0] if len(emps) == 1 else None,
                 "face": round(item["face"], 2),
                 "vp": round(item["vp"], 2),
                 "pdd": round(item["pdd"], 2),
@@ -140,6 +238,7 @@ def _listar_sacados_live(
         "data_ref": _br(ref),
         "data_ref_iso": ref.isoformat(),
         "cedentes": cedentes,
+        "empresas": empresas,
         "sacados": sacados,
     }
 
@@ -247,13 +346,24 @@ def _vencido_posicao(
     return money_half_up(float(pos.get("valor_face") or 0))
 
 
-def _estoque_inicial_sacado(alvo: str, *, cedente: str | None = None) -> dict[str, dict[str, Any]]:
+def _estoque_inicial_sacado(
+    alvo: str,
+    *,
+    cedente: str | None = None,
+    empresas: set[str] | None = None,
+    mapa_emp: dict[str, str] | None = None,
+) -> dict[str, dict[str, Any]]:
     from carteira_movimentacoes import carregar_estoque_base
 
+    mapa = mapa_emp if mapa_emp is not None else (
+        _carregar_mapa_empresa() if empresas else {}
+    )
     return {
         k: dict(v)
         for k, v in carregar_estoque_base().items()
-        if _match_sacado(v, alvo) and _match_cedente(v, cedente)
+        if _match_sacado(v, alvo)
+        and _match_cedente(v, cedente)
+        and _match_empresas(v, empresas, mapa)
     }
 
 
@@ -263,8 +373,13 @@ def _eventos_do_sacado(
     *,
     chaves_iniciais: set[str] | None = None,
     cedente: str | None = None,
+    empresas: set[str] | None = None,
+    mapa_emp: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     """Replay só de aquisições/liquidações dos títulos do sacado."""
+    mapa = mapa_emp if mapa_emp is not None else (
+        _carregar_mapa_empresa() if empresas else {}
+    )
     chaves = set(chaves_iniciais or ())
     out: list[dict[str, Any]] = []
     for ev in eventos:
@@ -273,7 +388,11 @@ def _eventos_do_sacado(
             continue
         tipo = str(ev.get("tipo") or "").lower()
         if tipo == "aquisicao":
-            if _match_sacado(ev, alvo) and _match_cedente(ev, cedente):
+            if (
+                _match_sacado(ev, alvo)
+                and _match_cedente(ev, cedente)
+                and _match_empresas(ev, empresas, mapa)
+            ):
                 chaves.add(chave)
                 out.append(ev)
         elif tipo == "liquidacao" and chave in chaves:
@@ -293,11 +412,12 @@ def _primeira_data_sacado_filtrado(
         aq = _parse_data_campo(pos.get("data_aquisicao"))
         if aq and aq >= DATA_MINIMA:
             datas.append(aq)
+    todos = _sacado_todos(alvo)
     alvo_u = alvo.strip().upper()
     for ev in eventos_sacado:
         if str(ev.get("tipo") or "").lower() != "aquisicao":
             continue
-        if str(ev.get("sacado") or "").strip().upper() != alvo_u:
+        if not todos and str(ev.get("sacado") or "").strip().upper() != alvo_u:
             continue
         d = _parse_data_campo(ev.get("data"))
         if d:
@@ -360,6 +480,8 @@ def _estado_sacado_ate(
     data_alvo: date,
     *,
     cedente: str | None = None,
+    empresas: set[str] | None = None,
+    mapa_emp: dict[str, str] | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Replay do estoque do sacado até data_alvo (inclusive, dias úteis)."""
     alvo = sacado.strip()
@@ -370,11 +492,21 @@ def _estado_sacado_ate(
         _carregar_eventos,
     )
 
-    estado = _estoque_inicial_sacado(alvo, cedente=cedente)
+    mapa = mapa_emp if mapa_emp is not None else (
+        _carregar_mapa_empresa() if empresas else {}
+    )
+    estado = _estoque_inicial_sacado(
+        alvo, cedente=cedente, empresas=empresas, mapa_emp=mapa
+    )
     chaves_iniciais = set(estado)
     todos_eventos = _carregar_eventos(desde=DATA_MINIMA)
     eventos = _eventos_do_sacado(
-        todos_eventos, alvo, chaves_iniciais=chaves_iniciais, cedente=cedente
+        todos_eventos,
+        alvo,
+        chaves_iniciais=chaves_iniciais,
+        cedente=cedente,
+        empresas=empresas,
+        mapa_emp=mapa,
     )
 
     inicio = _primeira_data_sacado_filtrado(eventos, estado, alvo) or DATA_MINIMA
@@ -415,9 +547,17 @@ def _kpis_sacado_em(
     *,
     modo: str = "motor",
     cedente: str | None = None,
+    empresas: set[str] | None = None,
+    mapa_emp: dict[str, str] | None = None,
 ) -> dict[str, float]:
     acumular = modo in ("juros_pos_venc", "juros-pos-venc", "2")
-    estado = _estado_sacado_ate(sacado, data_alvo, cedente=cedente)
+    estado = _estado_sacado_ate(
+        sacado,
+        data_alvo,
+        cedente=cedente,
+        empresas=empresas,
+        mapa_emp=mapa_emp,
+    )
     marcado = _marcar_subset_sacado(estado, data_alvo, acumular=acumular)
     return _totais_sacado_marcado(marcado, data_alvo, acumular=acumular)
 
@@ -428,12 +568,21 @@ def _anexar_kpis_hoje(
     sacado: str,
     modo: str,
     cedente: str | None = None,
+    empresas: set[str] | None = None,
+    mapa_emp: dict[str, str] | None = None,
 ) -> None:
     fim = _parse_data_base(str(resultado.get("data_ref_iso") or resultado.get("data_ref") or ""))
     hoje = date.today()
     if hoje <= fim:
         return
-    tot = _kpis_sacado_em(sacado, hoje, modo=modo, cedente=cedente)
+    tot = _kpis_sacado_em(
+        sacado,
+        hoje,
+        modo=modo,
+        cedente=cedente,
+        empresas=empresas,
+        mapa_emp=mapa_emp,
+    )
     resultado["kpis_hoje"] = {
         "data": _br(hoje),
         "data_iso": hoje.isoformat(),
@@ -450,6 +599,7 @@ def montar_extrato_sacado(
     *,
     modo: str = "motor",
     cedente: str | None = None,
+    empresas: str | None = None,
 ) -> dict[str, Any]:
     """
     Evolução diária da posição do sacado até a data base.
@@ -457,28 +607,56 @@ def montar_extrato_sacado(
     modo:
       - motor: sem acúmulo de juros após vencimento (padrão do motor)
       - juros_pos_venc: continua juros contratuais após vencimento
+
+    sacado vazio / "Todos": agrega todos os sacados (respeitando cedente/empresas).
     """
-    if not sacado.strip():
-        raise ValueError("Sacado não informado")
+    empresas_set = _parse_empresas_param(empresas)
+    mapa_emp = _carregar_mapa_empresa() if empresas_set else {}
+    usar_cache = (
+        not cedente
+        and not empresas_set
+        and not _sacado_todos(sacado)
+    )
 
     from extrato_sacado_cache import extrato_do_cache
 
-    em_cache = None if cedente else extrato_do_cache(sacado, data_base, modo=modo)
+    em_cache = (
+        extrato_do_cache(sacado, data_base, modo=modo) if usar_cache else None
+    )
     if em_cache is not None:
-        _anexar_kpis_hoje(em_cache, sacado=sacado, modo=modo, cedente=cedente)
+        _anexar_kpis_hoje(
+            em_cache,
+            sacado=sacado,
+            modo=modo,
+            cedente=cedente,
+            empresas=empresas_set,
+            mapa_emp=mapa_emp,
+        )
         return em_cache
 
     resultado = _montar_extrato_sacado_live(
-        sacado, data_base, modo=modo, cedente=cedente
+        sacado,
+        data_base,
+        modo=modo,
+        cedente=cedente,
+        empresas=empresas_set,
+        mapa_emp=mapa_emp,
     )
     try:
         from extrato_sacado_cache import gravar_extrato_modo
 
-        if not cedente:
+        if usar_cache:
             gravar_extrato_modo(sacado, data_base, modo, resultado)
     except OSError:
         pass
-    _anexar_kpis_hoje(resultado, sacado=sacado, modo=modo, cedente=cedente)
+    _anexar_kpis_hoje(
+        resultado,
+        sacado=sacado,
+        modo=modo,
+        cedente=cedente,
+        empresas=empresas_set,
+        mapa_emp=mapa_emp,
+    )
     return resultado
 
 
@@ -488,10 +666,15 @@ def _montar_extrato_sacado_live(
     *,
     modo: str = "motor",
     cedente: str | None = None,
+    empresas: set[str] | None = None,
+    mapa_emp: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     acumular = modo in ("juros_pos_venc", "juros-pos-venc", "2")
     fim = _parse_data_base(data_base)
-    alvo = sacado.strip()
+    alvo = sacado.strip() if not _sacado_todos(sacado) else "Todos"
+    mapa = mapa_emp if mapa_emp is not None else (
+        _carregar_mapa_empresa() if empresas else {}
+    )
 
     from carteira_movimentacoes import (
         DATA_MINIMA,
@@ -500,11 +683,18 @@ def _montar_extrato_sacado_live(
         _carregar_eventos,
     )
 
-    estado = _estoque_inicial_sacado(alvo, cedente=cedente)
+    estado = _estoque_inicial_sacado(
+        alvo, cedente=cedente, empresas=empresas, mapa_emp=mapa
+    )
     chaves_iniciais = set(estado)
     todos_eventos = _carregar_eventos(desde=DATA_MINIMA)
     eventos = _eventos_do_sacado(
-        todos_eventos, alvo, chaves_iniciais=chaves_iniciais, cedente=cedente
+        todos_eventos,
+        alvo,
+        chaves_iniciais=chaves_iniciais,
+        cedente=cedente,
+        empresas=empresas,
+        mapa_emp=mapa,
     )
 
     inicio = _primeira_data_sacado_filtrado(eventos, estado, alvo) or DATA_MINIMA
@@ -581,7 +771,7 @@ def _montar_extrato_sacado_live(
     return {
         "data_ref": _br(fim),
         "data_ref_iso": fim.isoformat(),
-        "sacado": sacado.strip(),
+        "sacado": alvo,
         "modo": "juros_pos_venc" if acumular else "motor",
         "modo_label": (
             "Juros após vencimento"
