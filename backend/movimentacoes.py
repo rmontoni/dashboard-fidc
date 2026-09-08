@@ -249,11 +249,23 @@ def listar_movimentacoes(
     )
 
     if tipo == "aquisicoes":
+        soma_valor = sum(float(x.get("valor") or 0) for x in filtradas)
+        soma_face = sum(float(x.get("valor_face") or 0) for x in filtradas)
+        peso_taxa = 0.0
+        soma_taxa_pond = 0.0
+        for x in filtradas:
+            taxa = x.get("taxa_am")
+            valor = float(x.get("valor") or 0)
+            if taxa is None or valor <= 0:
+                continue
+            peso_taxa += valor
+            soma_taxa_pond += float(taxa) * valor
         totais = {
             "n": len(filtradas),
-            "valor": round(sum(float(x.get("valor") or 0) for x in filtradas), 2),
-            "valor_face": round(
-                sum(float(x.get("valor_face") or 0) for x in filtradas), 2
+            "valor": round(soma_valor, 2),
+            "valor_face": round(soma_face, 2),
+            "taxa_am_media": (
+                round(soma_taxa_pond / peso_taxa, 4) if peso_taxa > 0 else None
             ),
         }
     else:

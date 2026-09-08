@@ -38,7 +38,14 @@ type RespostaMov = {
   fim: string
   cedentes: string[]
   sacados: string[]
-  totais: Record<string, number>
+  totais: {
+    n: number
+    valor?: number
+    valor_face?: number
+    taxa_am_media?: number | null
+    valor_pago?: number
+    ajuste?: number
+  }
   linhas: Array<LinhaAq | LinhaLiq>
 }
 
@@ -306,6 +313,10 @@ function Movimentacoes() {
                   <span>Valor de face</span>
                   <strong>{formatarMoeda(dados.totais.valor_face)}</strong>
                 </div>
+                <div className="painel-total">
+                  <span>Taxa a.m. média</span>
+                  <strong>{formatarPct(dados.totais.taxa_am_media ?? null)}</strong>
+                </div>
               </>
             ) : (
               <>
@@ -334,7 +345,7 @@ function Movimentacoes() {
               {dados.inicio} a {dados.fim}
             </p>
           </div>
-          <div className="tabela-scroll extrato-serie-scroll">
+          <div className="tabela-scroll extrato-serie-scroll mov-tabela-scroll">
             <table className="tabela-passivo">
               <thead>
                 <tr>
@@ -379,6 +390,62 @@ function Movimentacoes() {
                   </tr>
                 )}
               </tbody>
+              {linhas.length > 0 && (
+                <tfoot className="mov-totais-fixo">
+                  <tr>
+                    {colunas.map((col, idx) => {
+                      if (idx === 0) {
+                        return (
+                          <td key={col.id}>
+                            <strong>Total ({dados.totais.n})</strong>
+                          </td>
+                        )
+                      }
+                      if (aba === 'aquisicoes') {
+                        if (col.id === 'valor') {
+                          return (
+                            <td key={col.id}>
+                              <strong>{formatarMoeda(dados.totais.valor)}</strong>
+                            </td>
+                          )
+                        }
+                        if (col.id === 'valor_face') {
+                          return (
+                            <td key={col.id}>
+                              <strong>{formatarMoeda(dados.totais.valor_face)}</strong>
+                            </td>
+                          )
+                        }
+                        if (col.id === 'taxa_am') {
+                          return (
+                            <td key={col.id}>
+                              <strong>
+                                {formatarPct(dados.totais.taxa_am_media ?? null)}
+                              </strong>
+                            </td>
+                          )
+                        }
+                      } else {
+                        if (col.id === 'valor_pago') {
+                          return (
+                            <td key={col.id}>
+                              <strong>{formatarMoeda(dados.totais.valor_pago)}</strong>
+                            </td>
+                          )
+                        }
+                        if (col.id === 'ajuste') {
+                          return (
+                            <td key={col.id}>
+                              <strong>{formatarMoeda(dados.totais.ajuste)}</strong>
+                            </td>
+                          )
+                        }
+                      }
+                      return <td key={col.id} />
+                    })}
+                  </tr>
+                </tfoot>
+              )}
             </table>
           </div>
         </section>

@@ -1364,6 +1364,27 @@ td.alerta-pct {
   white-space: nowrap;
 }
 
+.mov-tabela-scroll {
+  max-height: min(70vh, 720px);
+}
+
+.mov-tabela-scroll thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #f3f6f9;
+}
+
+.mov-totais-fixo td {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  background: #eef3f8;
+  border-top: 2px solid var(--line);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
 .extrato-sacado-filtro {
   min-width: 280px;
 }
