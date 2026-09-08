@@ -85,6 +85,14 @@ function formatarMoeda(valor: number | null | undefined): string {
   })
 }
 
+function formatarPct(valor: number | null | undefined): string {
+  if (valor == null || Number.isNaN(Number(valor))) return '—'
+  return `${Number(valor).toLocaleString('pt-BR', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 4,
+  })}%`
+}
+
 function formatarPrazoDu(valor: number | null | undefined): string {
   if (valor == null || Number.isNaN(Number(valor))) return '—'
   return `${Number(valor).toLocaleString('pt-BR', {
