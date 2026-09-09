@@ -122,9 +122,8 @@ function Extrato() {
   const [cedentes, setCedentes] = useState<CedenteItem[]>([])
   const [cedenteSel, setCedenteSel] = useState('')
   const [empresas, setEmpresas] = useState<EmpresaItem[]>([])
-  /** null = Todas; Set = filtro; empty Set + nenhuma = desmarcadas */
+  /** Set vazio = Todas; com nomes = filtro ativo */
   const [empresasFiltro, setEmpresasFiltro] = useState<Set<string>>(new Set())
-  const [empresasNenhuma, setEmpresasNenhuma] = useState(false)
   const [buscaEmpresa, setBuscaEmpresa] = useState('')
   const [sugestoesEmpresaAberto, setSugestoesEmpresaAberto] = useState(false)
   const [sacados, setSacados] = useState<SacadoItem[]>([])
@@ -153,10 +152,9 @@ function Extrato() {
   )
 
   const empresasParam = useMemo(() => {
-    if (empresasNenhuma) return '__nenhuma__'
     if (empresasFiltro.size === 0) return ''
     return [...empresasFiltro].sort(compararNomes).join('|')
-  }, [empresasFiltro, empresasNenhuma])
+  }, [empresasFiltro])
 
   const termoBuscaEmpresa = useMemo(
     () => normalizarBusca(buscaEmpresa),
@@ -176,19 +174,17 @@ function Extrato() {
   }, [empresasNaLista, termoBuscaEmpresa])
 
   const valorSelectEmpresa = useMemo(() => {
-    if (empresasNenhuma) return '__nenhuma__'
     if (empresasFiltro.size === 0) return ''
     if (empresasFiltro.size === 1) return [...empresasFiltro][0]
     return '__multi__'
-  }, [empresasFiltro, empresasNenhuma])
+  }, [empresasFiltro])
 
   const sacadosPorEmpresa = useMemo(() => {
-    if (empresasNenhuma) return []
     if (empresasFiltro.size === 0) return sacados
     return sacados.filter((s) =>
       (s.empresas ?? []).some((e) => empresasFiltro.has(e)),
     )
-  }, [sacados, empresasFiltro, empresasNenhuma])
+  }, [sacados, empresasFiltro])
 
   const sacadosOrdenados = useMemo(
     () => [...sacadosPorEmpresa].sort((a, b) => compararNomes(a.sacado, b.sacado)),
@@ -206,47 +202,32 @@ function Extrato() {
   }, [sacadosOrdenados, buscaSacado])
 
   function selecionarTodasEmpresas() {
-    setEmpresasNenhuma(false)
-    setEmpresasFiltro(new Set())
-  }
-
-  function desmarcarTodasEmpresas() {
-    setEmpresasNenhuma(true)
     setEmpresasFiltro(new Set())
   }
 
   function escolherEmpresa(nome: string) {
-    if (!empresasNenhuma && empresasFiltro.size === 0) {
-      setEmpresasNenhuma(false)
+    // A partir de Todos: seleciona só esta. Depois: alterna (multi).
+    if (empresasFiltro.size === 0) {
       setEmpresasFiltro(new Set([nome]))
       return
     }
     const prox = new Set(empresasFiltro)
     if (prox.has(nome)) prox.delete(nome)
     else prox.add(nome)
-    if (prox.size === 0) {
-      desmarcarTodasEmpresas()
-      return
-    }
-    if (prox.size === empresasOrdenadas.length) {
+    if (prox.size === 0 || prox.size === empresasOrdenadas.length) {
       selecionarTodasEmpresas()
       return
     }
-    setEmpresasNenhuma(false)
     setEmpresasFiltro(prox)
   }
 
   function onEmpresaSelectChange(value: string) {
-    if (value === '') {
+    if (value === '' || value === '__multi__') {
       selecionarTodasEmpresas()
       return
     }
-    if (value === '__nenhuma__') {
-      desmarcarTodasEmpresas()
-      return
-    }
-    if (value === '__multi__') return
-    escolherEmpresa(value)
+    // Lista suspensa: define a empresa escolhida (substitui o filtro)
+    setEmpresasFiltro(new Set([value]))
   }
 
   useEffect(() => {
@@ -324,14 +305,7 @@ function Extrato() {
           if (atual.size === 0) return atual
           const nomes = new Set(listaEmp.map((e) => e.empresa))
           const prox = new Set([...atual].filter((e) => nomes.has(e)))
-          if (prox.size === 0) {
-            setEmpresasNenhuma(true)
-            return new Set()
-          }
-          if (prox.size === nomes.size) {
-            setEmpresasNenhuma(false)
-            return new Set()
-          }
+          if (prox.size === 0 || prox.size === nomes.size) return new Set()
           return prox
         })
         setBuscaEmpresa('')
@@ -526,7 +500,6 @@ function Extrato() {
             <select
               value={
                 valorSelectEmpresa === '' ||
-                valorSelectEmpresa === '__nenhuma__' ||
                 valorSelectEmpresa === '__multi__' ||
                 empresasOrdenadas.some((e) => e.empresa === valorSelectEmpresa)
                   ? valorSelectEmpresa
@@ -536,7 +509,6 @@ function Extrato() {
               disabled={empresasOrdenadas.length === 0}
             >
               <option value="">Todos</option>
-              <option value="__nenhuma__">Nenhuma selecionada</option>
               {empresasFiltro.size > 1 && (
                 <option value="__multi__">
                   {empresasFiltro.size} selecionadas
@@ -549,7 +521,6 @@ function Extrato() {
               )}
               {empresasNaLista.map((e) => (
                 <option key={e.empresa} value={e.empresa}>
-                  {empresasFiltro.has(e.empresa) ? '✓ ' : ''}
                   {e.empresa} — VP {formatarMoeda(e.vp)}
                 </option>
               ))}
