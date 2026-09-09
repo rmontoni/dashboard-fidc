@@ -356,20 +356,39 @@ function Extrato() {
         const res = await fetch(`${API_BASE}/fidc/extrato/sacado?${params}`, {
           signal: ctrl.signal,
         })
-        const json = await res.json()
+        const texto = await res.text()
         if (cancelado) return
-        if (!res.ok) {
+        let json: Record<string, unknown> = {}
+        try {
+          json = texto ? (JSON.parse(texto) as Record<string, unknown>) : {}
+        } catch {
+          const trecho = texto.trim().slice(0, 120)
           setExtrato(null)
-          setErro(typeof json.detail === 'string' ? json.detail : 'Falha ao carregar extrato.')
+          if (/an error occurred/i.test(trecho) || res.status >= 502) {
+            setErro(
+              'O servidor não respondeu a tempo ao agregar a empresa. Selecione um sacado específico ou tente de novo.',
+            )
+          } else {
+            setErro(trecho || `Falha HTTP ${res.status}`)
+          }
           return
         }
-        setExtrato(json as RespostaExtrato)
+        if (!res.ok) {
+          setExtrato(null)
+          setErro(
+            typeof json.detail === 'string'
+              ? json.detail
+              : 'Falha ao carregar extrato.',
+          )
+          return
+        }
+        setExtrato(json as unknown as RespostaExtrato)
       } catch (e) {
         if (cancelado) return
         setExtrato(null)
         if (e instanceof DOMException && e.name === 'AbortError') {
           setErro(
-            'Tempo esgotado. O servidor pode estar ocupado — tente novamente ou filtre por empresa/sacado.',
+            'Tempo esgotado. Selecione um sacado específico ou tente novamente.',
           )
         } else {
           setErro(e instanceof Error ? e.message : 'Erro de rede')

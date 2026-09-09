@@ -71,18 +71,26 @@ def _parse_empresas_param(texto: str | None) -> set[str] | None:
     return set(partes) if partes else None
 
 
+_MAPA_EMPRESA_CACHE: dict[str, str] | None = None
+
+
 def _carregar_mapa_empresa() -> dict[str, str]:
     """documento → nome da empresa (cadastro consignado)."""
+    global _MAPA_EMPRESA_CACHE
+    if _MAPA_EMPRESA_CACHE is not None:
+        return _MAPA_EMPRESA_CACHE
     try:
         from consignado import _carregar_cadastro
 
         cadastro = _carregar_cadastro()
     except Exception:  # noqa: BLE001
-        return {}
+        _MAPA_EMPRESA_CACHE = {}
+        return _MAPA_EMPRESA_CACHE
     out: dict[str, str] = {}
     for doc, meta in cadastro.items():
         emp = str(meta.get("empresa") or "").strip()
         out[str(doc).strip()] = emp if emp else SEM_EMPRESA
+    _MAPA_EMPRESA_CACHE = out
     return out
 
 
@@ -631,14 +639,15 @@ def montar_extrato_sacado(
         extrato_do_cache(sacado, data_base, modo=modo) if usar_cache else None
     )
     if em_cache is not None:
-        _anexar_kpis_hoje(
-            em_cache,
-            sacado=sacado,
-            modo=modo,
-            cedente=cedente,
-            empresas=empresas_set,
-            mapa_emp=mapa_emp,
-        )
+        if not _sacado_todos(sacado):
+            _anexar_kpis_hoje(
+                em_cache,
+                sacado=sacado,
+                modo=modo,
+                cedente=cedente,
+                empresas=empresas_set,
+                mapa_emp=mapa_emp,
+            )
         return em_cache
 
     resultado = _montar_extrato_sacado_live(
@@ -656,15 +665,32 @@ def montar_extrato_sacado(
             gravar_extrato_modo(sacado, data_base, modo, resultado)
     except OSError:
         pass
-    _anexar_kpis_hoje(
-        resultado,
-        sacado=sacado,
-        modo=modo,
-        cedente=cedente,
-        empresas=empresas_set,
-        mapa_emp=mapa_emp,
-    )
+    # Agregado (Todos) já é custoso — não recalcula projeção "hoje".
+    if not _sacado_todos(sacado):
+        _anexar_kpis_hoje(
+            resultado,
+            sacado=sacado,
+            modo=modo,
+            cedente=cedente,
+            empresas=empresas_set,
+            mapa_emp=mapa_emp,
+        )
     return resultado
+
+
+def _retroceder_dias_uteis(fim: date, n: int, *, limite: date) -> date:
+    """Volta n dias úteis a partir de fim (inclusive), sem passar de limite."""
+    if n <= 0:
+        return fim
+    d = fim
+    vistos = 0
+    while d > limite:
+        if e_dia_util(d):
+            vistos += 1
+            if vistos >= n:
+                return d
+        d -= timedelta(days=1)
+    return limite
 
 
 def _montar_extrato_sacado_live(
@@ -708,15 +734,21 @@ def _montar_extrato_sacado_live(
     if inicio > fim:
         inicio = fim
 
+    # Agregados grandes: avança eventos sem montar série até a janela recente.
+    serie_desde = inicio
+    if _sacado_todos(alvo) and len(estado) > 150:
+        serie_desde = _retroceder_dias_uteis(fim, 130, limite=inicio)
+
     ev_idx = 0
     serie: list[dict[str, Any]] = []
     d_prev_util: date | None = None
+    agregado_grande = _sacado_todos(alvo) and len(estado) > 150
 
-    # Aplica movimentos anteriores ao primeiro dia útil da série.
-    d_loop = inicio
+    # Aplica movimentos anteriores ao primeiro dia útil da série exibida.
+    d_loop = serie_desde
     while d_loop <= fim and not e_dia_util(d_loop):
         d_loop += timedelta(days=1)
-    if d_loop <= fim and d_loop > inicio:
+    if d_loop <= fim and (d_loop > inicio or serie_desde > inicio):
         limite_pre = d_loop - timedelta(days=1)
         while ev_idx < len(eventos) and str(eventos[ev_idx].get("data") or "") <= limite_pre.isoformat():
             ev_idx += 1
@@ -724,7 +756,7 @@ def _montar_extrato_sacado_live(
             estado = _aplicar_eventos_ate(eventos[:ev_idx], limite_pre, base=estado)
             _aplicar_repactuacoes(estado, limite_pre)
 
-    d = d_loop if d_loop <= fim else inicio
+    d = d_loop if d_loop <= fim else serie_desde
     while d <= fim:
         if not e_dia_util(d):
             d += timedelta(days=1)
@@ -737,7 +769,11 @@ def _montar_extrato_sacado_live(
         aquisicao, liquidacao = _movimentos_dia_sacado(
             eventos, inicio_ev, ev_idx, alvo, estado
         )
-        juros = _juros_dia_subset(estado, d, d_prev_util, acumular=acumular)
+        if agregado_grande:
+            # Evita 2 marcações extras/dia no agregado (VP/face/PDD continuam corretos).
+            juros = 0.0
+        else:
+            juros = _juros_dia_subset(estado, d, d_prev_util, acumular=acumular)
 
         if ev_idx > inicio_ev:
             estado = _aplicar_eventos_ate(eventos[inicio_ev:ev_idx], d, base=estado)
@@ -785,8 +821,8 @@ def _montar_extrato_sacado_live(
             if acumular
             else "Sem juros após vencimento"
         ),
-        "inicio": _br(inicio),
-        "inicio_iso": inicio.isoformat(),
+        "inicio": _br(serie_desde if serie else inicio),
+        "inicio_iso": (serie_desde if serie else inicio).isoformat(),
         "serie": serie,
         "kpis": {
             "face": ultimo["face"],
