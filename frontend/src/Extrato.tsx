@@ -127,8 +127,6 @@ function Extrato() {
   const [empresasNenhuma, setEmpresasNenhuma] = useState(false)
   const [buscaEmpresa, setBuscaEmpresa] = useState('')
   const [sugestoesEmpresaAberto, setSugestoesEmpresaAberto] = useState(false)
-  /** Alterna A/B para o option Todos disparar onChange ao reclicar. */
-  const [todosToken, setTodosToken] = useState<'A' | 'B'>('A')
   const [sacados, setSacados] = useState<SacadoItem[]>([])
   /** null = ainda não escolhido (auto 1º); '' = Todos; nome = sacado */
   const [sacadoSel, setSacadoSel] = useState<string | null>(null)
@@ -179,17 +177,10 @@ function Extrato() {
 
   const valorSelectEmpresa = useMemo(() => {
     if (empresasNenhuma) return '__nenhuma__'
-    if (empresasFiltro.size === 0) return `todos_${todosToken}`
+    if (empresasFiltro.size === 0) return ''
     if (empresasFiltro.size === 1) return [...empresasFiltro][0]
     return '__multi__'
-  }, [empresasFiltro, empresasNenhuma, todosToken])
-
-  const valorOptionTodos =
-    !empresasNenhuma && empresasFiltro.size === 0
-      ? todosToken === 'A'
-        ? 'todos_B'
-        : 'todos_A'
-      : `todos_${todosToken}`
+  }, [empresasFiltro, empresasNenhuma])
 
   const sacadosPorEmpresa = useMemo(() => {
     if (empresasNenhuma) return []
@@ -224,9 +215,8 @@ function Extrato() {
     setEmpresasFiltro(new Set())
   }
 
-  function alternarEmpresa(nome: string) {
-    const eraTodos = !empresasNenhuma && empresasFiltro.size === 0
-    if (eraTodos) {
+  function escolherEmpresa(nome: string) {
+    if (!empresasNenhuma && empresasFiltro.size === 0) {
       setEmpresasNenhuma(false)
       setEmpresasFiltro(new Set([nome]))
       return
@@ -247,17 +237,16 @@ function Extrato() {
   }
 
   function onEmpresaSelectChange(value: string) {
-    if (value.startsWith('todos_')) {
-      if (!empresasNenhuma && empresasFiltro.size === 0) {
-        desmarcarTodasEmpresas()
-      } else {
-        selecionarTodasEmpresas()
-        setTodosToken(value.endsWith('A') ? 'A' : 'B')
-      }
+    if (value === '') {
+      selecionarTodasEmpresas()
       return
     }
-    if (value === '__nenhuma__' || value === '__multi__') return
-    alternarEmpresa(value)
+    if (value === '__nenhuma__') {
+      desmarcarTodasEmpresas()
+      return
+    }
+    if (value === '__multi__') return
+    escolherEmpresa(value)
   }
 
   useEffect(() => {
@@ -522,7 +511,7 @@ function Extrato() {
                           : 'extrato-empresa-sugestao'
                       }
                       onClick={() => {
-                        alternarEmpresa(e.empresa)
+                        escolherEmpresa(e.empresa)
                         setBuscaEmpresa('')
                         setSugestoesEmpresaAberto(false)
                       }}
@@ -536,20 +525,18 @@ function Extrato() {
             )}
             <select
               value={
-                valorSelectEmpresa.startsWith('todos_') ||
-                valorSelectEmpresa === '__multi__' ||
+                valorSelectEmpresa === '' ||
                 valorSelectEmpresa === '__nenhuma__' ||
-                empresasNaLista.some((e) => e.empresa === valorSelectEmpresa)
+                valorSelectEmpresa === '__multi__' ||
+                empresasOrdenadas.some((e) => e.empresa === valorSelectEmpresa)
                   ? valorSelectEmpresa
-                  : valorOptionTodos
+                  : ''
               }
               onChange={(e) => onEmpresaSelectChange(e.target.value)}
               disabled={empresasOrdenadas.length === 0}
             >
-              <option value={valorOptionTodos}>Todos</option>
-              {empresasNenhuma && (
-                <option value="__nenhuma__">Nenhuma selecionada</option>
-              )}
+              <option value="">Todos</option>
+              <option value="__nenhuma__">Nenhuma selecionada</option>
               {empresasFiltro.size > 1 && (
                 <option value="__multi__">
                   {empresasFiltro.size} selecionadas
@@ -575,7 +562,7 @@ function Extrato() {
                     type="button"
                     className="extrato-empresa-chip"
                     title="Remover"
-                    onClick={() => alternarEmpresa(nome)}
+                    onClick={() => escolherEmpresa(nome)}
                   >
                     {nome} ×
                   </button>
