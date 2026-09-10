@@ -303,22 +303,38 @@ def _marcar_subset_sacado(
     *,
     acumular: bool,
 ) -> dict[str, dict[str, Any]]:
+    """Marca subset com faixa PDD por sacado (mesmo critério do motor)."""
     if not subset:
         return {}
-    max_atraso = 0
+
+    def _chave_sacado(pos: dict[str, Any]) -> str:
+        doc = str(pos.get("doc_sacado") or "").strip()
+        if doc and doc.lower() not in {"nan", "none", "null"}:
+            return f"doc:{doc}"
+        return f"nome:{str(pos.get('sacado') or '').strip()}"
+
+    atraso_sacado: dict[str, int] = {}
     for pos in subset.values():
+        chave_sac = _chave_sacado(pos)
         venc = _parse_data_simples(pos.get("data_vencimento"))
         if venc is not None:
-            max_atraso = max(max_atraso, (data_alvo - venc).days)
-    faixa = letra_pdd_por_dias(max_atraso)
-    fat = fator_pdd(faixa)
+            dias = (data_alvo - venc).days
+            if dias > atraso_sacado.get(chave_sac, 0):
+                atraso_sacado[chave_sac] = dias
+
+    faixa_sacado: dict[str, str] = {
+        chave_sac: letra_pdd_por_dias(dias)
+        for chave_sac, dias in atraso_sacado.items()
+    }
+
     out: dict[str, dict[str, Any]] = {}
     for chave, pos in subset.items():
         p = dict(pos)
         vp = _vp_posicao(p, data_alvo, acumular=acumular)
+        faixa = faixa_sacado.get(_chave_sacado(p), "AA")
         p["vl_presente_adm"] = vp
         p["fx_pdd"] = faixa
-        p["vl_pdd"] = money_half_up(vp * fat)
+        p["vl_pdd"] = money_half_up(vp * fator_pdd(faixa))
         out[chave] = p
     return out
 
